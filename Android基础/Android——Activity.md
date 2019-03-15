@@ -57,8 +57,9 @@ Activity 的生命周期分为两种情况：一种是正常情况下，一种�
 
 参考：
 《Android 开发艺术探索》第一章
+
 [Android Developer Activity](https://developer.android.com/guide/components/activities)
 
 
 
-<img width="200" height="200" src="https://note.youdao.com/yws/public/resource/123c1bcad5b727fdc43fc19abcdb46f6/xmlnote/BDC8C5FEC02F4B2B865F496EEBD8DFE0/1281"/>
+<center><img width="200" height="200" src="https://note.youdao.com/yws/public/resource/123c1bcad5b727fdc43fc19abcdb46f6/xmlnote/BDC8C5FEC02F4B2B865F496EEBD8DFE0/1281"/>
