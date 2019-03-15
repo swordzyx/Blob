@@ -56,10 +56,11 @@ Activity 的生命周期分为两种情况：一种是正常情况下，一种�
 > 注：进程之间的依赖性对进程的优先级也会有影响。比如进程 A 绑定到带有 Context.bind_auto_create标志的服务，那么该服务所在的进程的优先级至少是和 A 进程的优先级一样。
 
 参考：
+
 《Android 开发艺术探索》第一章
 
 [Android Developer Activity](https://developer.android.com/guide/components/activities)
 
 
 
-<center><img width="200" height="200" src="https://note.youdao.com/yws/public/resource/123c1bcad5b727fdc43fc19abcdb46f6/xmlnote/BDC8C5FEC02F4B2B865F496EEBD8DFE0/1281"/>
+<div align=center><img width="200" height="200" src="https://note.youdao.com/yws/public/resource/123c1bcad5b727fdc43fc19abcdb46f6/xmlnote/BDC8C5FEC02F4B2B865F496EEBD8DFE0/1281"/></div>
