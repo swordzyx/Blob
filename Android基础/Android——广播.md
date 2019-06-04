@@ -225,7 +225,5 @@ final int broadcastIntentLocked(ProcessRecord callerApp,
 
 
 
-<center>
-    <img src="https://note.youdao.com/yws/public/resource/123c1bcad5b727fdc43fc19abcdb46f6/xmlnote/F735E3C764BE452194D2C24594731682/3385">
-</center>
+<div align=center><img width="200" height="200" src="https://note.youdao.com/yws/public/resource/123c1bcad5b727fdc43fc19abcdb46f6/xmlnote/BDC8C5FEC02F4B2B865F496EEBD8DFE0/1281"/></div>
 
