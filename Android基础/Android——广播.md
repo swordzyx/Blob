@@ -150,3 +150,82 @@ Android 有三种发送广播的方式
 - 尽量不要在 onReceive() 中开启活动，想一想玩手机玩的好好地，突然给调到另一个界面，会不会很想卸载那个应用。可以采用显示通知的方式。
 
 
+### 6. Protected Broadcast
+顾名思义，为受保护的广播Action。对应的标签为 `<protected-broadcast>` 。例如想将一个自定义的action设置为受保护的广播，在 AndroidManifest.xml 添加以下语句即可：
+```xml
+<protected-broadcast android:name="android.action.ACTION_PROTECTED" />
+```
+不过在普通的应用开发场景中用不到，因为这种类型的广播只供系统 app 使用，第三方的 app 声明改标签会被系统给忽略掉。
+
+之前在工作中遇到过在 framework 层发送一个自定义的广播，在广播接收器里面接收不到，查看日志发现是报以下错误：
+```ActivityManager: Sending non-protected broadcast...```
+在网上搜了一下发现是因为自定义的那个广播没有被声明为 `<protected-broadcast>` 的原因，然后在 `Y:\T1\android\frameworks\base\core\res\AndroidManifest.xml` 中将自定义的广播声明为受保护的广播即可。
+
+然后找了一下源码中那个地方会抛出上面那个错误，代码在 `ActivityManagerService.java` 中，如下：
+```java
+private void checkBroadcastFromSystem(Intent intent, ProcessRecord callerApp, String callerPackage, int callingUid, boolean isProtectedBroadcast, List receivers) {
+    ....
+     if (isProtectedBroadcast
+                || Intent.ACTION_CLOSE_SYSTEM_DIALOGS.equals(action)
+                || Intent.ACTION_DISMISS_KEYBOARD_SHORTCUTS.equals(action)
+                || Intent.ACTION_MEDIA_BUTTON.equals(action)
+                || Intent.ACTION_MEDIA_SCANNER_SCAN_FILE.equals(action)
+                || Intent.ACTION_SHOW_KEYBOARD_SHORTCUTS.equals(action)
+                || Intent.ACTION_MASTER_CLEAR.equals(action)
+                || Intent.ACTION_FACTORY_RESET.equals(action)
+                || AppWidgetManager.ACTION_APPWIDGET_CONFIGURE.equals(action)
+                || AppWidgetManager.ACTION_APPWIDGET_UPDATE.equals(action)
+                || LocationManager.HIGH_POWER_REQUEST_CHANGE_ACTION.equals(action)
+                || TelephonyIntents.ACTION_REQUEST_OMADM_CONFIGURATION_UPDATE.equals(action)
+                || SuggestionSpan.ACTION_SUGGESTION_PICKED.equals(action)
+                || AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION.equals(action)
+                || AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION.equals(action)) {
+            // Broadcast is either protected, or it's a public action that
+            // we've relaxed, so it's fine for system internals to send.
+            return;
+        }
+    ....
+    
+    if (callerApp != null) {
+            Log.wtf(TAG, "Sending non-protected broadcast " + action + " from system " + callerApp.toShortString() + " pkg " + callerPackage, new Throwable());
+    } else {
+            Log.wtf(TAG, "Sending non-protected broadcast " + action + " from system uid " + UserHandle.formatUid(callingUid) + " pkg " + callerPackage, new Throwable());
+    }
+    
+    .....
+}
+
+```
+可以看出从系统发出的广播会被检查，如果该广播没有被声明为 `protected-broadcast` ，则会报错。
+
+与之相反，在普通的 app 中则只能发送不受保护的广播，否则会抛一个异常，代码也·在 `ActivityManagerService.java` 中：
+```java
+final int broadcastIntentLocked(ProcessRecord callerApp,
+            String callerPackage, Intent intent, String resolvedType,
+            IIntentReceiver resultTo, int resultCode, String resultData,
+            Bundle resultExtras, String[] requiredPermissions, int appOp, Bundle bOptions,
+            boolean ordered, boolean sticky, int callingPid, int callingUid, int userId) {
+    ...
+    if (!isCallerSystem) {
+        if (isProtectedBroadcast) {
+            String msg = "Permission Denial: not allowed to send broadcast "
+                    + action + " from pid="
+                    + callingPid + ", uid=" + callingUid;
+            Slog.w(TAG, msg);
+            throw new SecurityException(msg);
+
+        }else if(...){
+            ...
+        }
+        ...
+    }
+    ...
+}
+```
+
+
+
+<center>
+    <img src="https://note.youdao.com/yws/public/resource/123c1bcad5b727fdc43fc19abcdb46f6/xmlnote/F735E3C764BE452194D2C24594731682/3385">
+</center>
+
