@@ -17,10 +17,6 @@
 - 极客时间Android开发高手课 学习笔记归纳整理
 - 《Android应用性能优化最佳实践》 
 
-##### Android NDK
-
-- 动脑学院的 NDK 笔记归纳整理
-
 ##### Android 源码解读：
 
 - 《Android 源码情景分析》笔记归纳与整理
