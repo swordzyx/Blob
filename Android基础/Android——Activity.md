@@ -2,7 +2,7 @@
 Actvity是Android中的四大组件之一，平常我们在手机一个用程序上所看的界面就是 Activity 的表现形式。而且 Activity 也是用户唯一能够感知到的组件，每一个UI的界面就是通过 Activity 显示在屏幕上的，平常我们在软件里进行的各种页面的切换很大一部分是不同 Activity 的跳转。
 
 我们在日常生活中不可避免的打开很多个不同的应用， Activity 的生命周期便是从我们点开图标的那一瞬间开始的。，Google官方给出了Activity的生命周期图，如下：<br />
-![alt text](https://note.youdao.com/yws/public/resource/66a1078a2b65fd9f105b4d5efe49298c/xmlnote/2B754B4548A7471F918C05C9ADDF2C21/635)     <br/>
+![alt text](https://github.com/zerolans/Blob/blob/master/Android%E5%9F%BA%E7%A1%80/picture/Activity-pic1.png)     <br/>
 先来看看它的几个回调方法:
 * **onCreate()**：此方法在活动创建时被触发，此时活动处于创建状态，一般 Activity 的一些初始化的工作在该方法中执行，且在生命周期内只会执行一次。在该方法调用 setContentView 中进行 View 的创建。
 * **onStart()**：这个方法紧接着 onCreate ，此时已经是可以看到活动的了，但是无法进行交互。此时 Activity 处于启动的状态。紧接着会回调 onResume() 。
