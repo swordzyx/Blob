@@ -1,46 +1,99 @@
-### Android 四大组件 —— Activity ###
+# Android 四大组件 —— Activity
+
 Actvity是Android中的四大组件之一，平常我们在手机一个用程序上所看的界面就是 Activity 的表现形式。而且 Activity 也是用户唯一能够感知到的组件，每一个UI的界面就是通过 Activity 显示在屏幕上的，平常我们在软件里进行的各种页面的切换很大一部分是不同 Activity 的跳转。
 
-我们在日常生活中不可避免的打开很多个不同的应用， Activity 的生命周期便是从我们点开图标的那一瞬间开始的。，Google官方给出了Activity的生命周期图，如下：<br />
-![alt text](picture/Activity-pic1.png)     <br/>
-先来看看它的几个回调方法:
+## 一、创建一个 Activity
 
-* **onCreate()**：此方法在活动创建时被触发，此时活动处于创建状态，一般 Activity 的一些初始化的工作在该方法中执行，且在生命周期内只会执行一次。在该方法调用 setContentView 中进行 View 的创建。
-* **onStart()**：这个方法紧接着 onCreate ，此时已经是可以看到活动的了，但是无法进行交互。此时 Activity 处于启动的状态。紧接着会回调 onResume() 。
-* **onResume()**：此时 Activity 处于 Resume 状态，位于前台完全可见也可以进行交互，我们看到的界面便是 Activity 保持在 onResume() 状态。该方法之后是 onPause() 方法。
-* **onPause()**：该方法是在 onResume 之后执行的，此时活动处于暂停状态，不在位于前台，可见但是无法交互。这个方法的执行时间非常短，因此不应该在此方法中执行重量级的资源释放。
-* **onStop()**：此时活动对用户已经不可见了。紧接着会回调 onRestart() 或者 onDestory()。此时 Activity 处于 Stopped 状态，活动的控件实例还是存在的，只是没有被显示。此方法中可以释放对用户不可见时的资源。也可以在此方法中进行数据的保存。
-* **onRestart()**：表示 Activity 从停止状态重新启动。后面会回调 onStart()
-* **onDestroy()**：活动被销毁，这是系统生命周期的最后一个回调。一般在这个回调中进行释放所有还未释放的资源。
+创建一个继承自 Activity 的类，即可创建一个 Activity。
 
-用户打开和关闭应用程序的过程其实就是 Activity 在不同的状态之间进行切换的过程。我们所做的就是在正确的状态下执行需要的逻辑。
+```java
+public class MainActivity extends Activity {
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+    }
+}
+```
 
-Activity 的生命周期分为两种情况：一种是正常情况下，一种是异常情况下。
-* 正常情况下就是用户正常打开应用，是用完之后按返回键退出，以上的回调方法执行顺序如下：
-`onCreate -> onStart -> onResume -> 用户操作 -> onPause -> onStop -> onDestory`
-* 当应用在启动或者用户使用的过程中发生了什么意外，就是异常情况下的生命周期，异常情况下的生命周期要分情况讨论：
-    * 系统配置发生改变：比如屏幕的方向发生旋转、该改变语言环境，或者输入设备发生更改。当这些发生时， Activity 会被销毁和重建， Activity 会执行`onPause -> onStop -> onDestory -> onCreate -> onStart -> onResume`
-    * 手机变为多窗口：Android 7.0 以后，增加了一个“多窗口”模式，应用程序进入多窗口模式或者在多窗口模式中改变大小都会引发系统配置的更改，可以在代码中自行处理配置更改，也可以对 Activity 进行销毁和重建
-    * 当前的 Actiivty 被新的 Activity 或者 Dialog 所部分覆盖。这种情况下当前的 Activity 会回调 onPause 方法。当新的 Activity 退出或者 Dialog 消失使会重新调用 onResume 方法。如果完全覆盖则会调用 onStop 方法，再回到该界面时则会回调 onStart 。
-    * 系统的内存不足时，会杀死后台的进程来确保前台应用的正常运行。
+Activity 是一个展示型的而组件，我们在 app 中看到的界面在代码里面基本上是一个个的 Activity。在 onCreate 方法中会调用 setContentView() 方法加载一个xml类型的视图文件，这个文件里面定义了我们在界面上看到的内容，比如搜索框，列表等等。上面的代码就是加载了一个 activity_main.xml 文件，代码如下：
 
-关于系统配置改变时 Activity 重建的情况，Android 提供了一个属性用于在指定属性发生改变时不重建 Activity，该属性为： android:configChanges ，不同的值用“|”连接。该属性的值如下：
-* **mcc**：SIM卡唯一标识IMSI（国际移动用户识别码）中的代码，有三位数组成，中国为460，此项标识mcc代码发生了改变
-* **mnc**：SIM卡唯一标识了IMSI（国际移动用户识别码）中的运营商代码，由两位数组成，中国移动TD系统为00，中国联通为01，中国电信为03，此项标识mnc发生了改变
-* **locale**：设备本地位置发生了改变，一般指切换了系统语言
-* **touchscreen**：触摸屏发生了改变，这个很费解，正常情况下无法发生，可以忽略它
-* **keyboard**：键盘类型发生了改变，比如用户使用了外插键盘
-* **keyboardHidden**：键盘的可问性发生了改变，比如用户调出了键盘
-* **navigation**：系统导航方式发生了改变，比如采用了轨迹球导航，这个很难发生，可以忽略它
-* **screenLayout**：屏幕布局发生了改变，很可能是用户激活了另一个显示设备
-* **fontStyle**：系统的字体缩放比例发生了改变，比如用于选择了一个新的字号
-* **uiMode**：用户界面模式发生了改变，比如是否开启了夜间模式（API 8添加）
-* **orientation**：屏幕方向发生了改变，这个是最常用的，比如旋转了手机屏幕
-* **screenSize**：当屏幕的尺寸信息发生了改变，当旋转设备屏幕时，屏幕尺寸会发生变化，这个选项比较特殊，它和编译选项有关，当编译选项中的minSdkVersion和targetSdkVersion均低于13时，此选项不会导致Activity重启，否则会导致Activity重启（API 13重新添加）
-* **smallestScreenSize**：设备的物理尺寸发生了改变，这个项目和屏幕的方向没有关系，仅仅在实际的物理屏幕尺寸改变时的时候发生，比如用户切换到了外部的显示设备，这个选项和screenSize一样，这个选项不会导致Activity重启否则会导致Activity重启
-* **layoutDirection**：当布局发现发生变化，这个属性用的比较少，正常情况下无需修改布局的layoutDirection属性（API 17时添加）
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity">
+
+    <Button
+        android:id="@+id/first_activity"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="FirstActivity"
+        android:onClick="onClick" />
+
+    <Button
+        android:id="@+id/button2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Button" />
+
+</LinearLayout>
+```
+
+`<Button>` 标签用于定义一个按钮，上面的代码中定义了两个按钮。运行得到如下的结果：
+
+<img src="picture\Activity_pic3.png" alt="image-20200302153801973" style="zoom:67%;" />
+
+## 二、Activity 生命周期
+
+上面的 MainActivity.java 中，有一个 onCreate 方法，这其实是 Activity 组件的生命周期回调方法，除了 onCreate 之外，还有其他 6 个回调方法，分别对应 Activity 不同的状态，如下：
+
+|||
+|--|--|
+|**onCreate**|此方法在活动创建时被触发，此时活动处于创建状态，一般 Activity 的一些初始化的工作在该方法中执行，且在生命周期内只会执行一次。在该方法调用 setContentView 中进行 View 的创建。|
+|**onStart**|这个方法紧接着 onCreate ，此时已经是可以看到活动的了，但是无法进行交互。此时 Activity 处于启动的状态。紧接着会回调 onResume() 。|
+|**onResume**|此时 Activity 处于 Resume 状态，位于前台完全可见也可以进行交互，我们看到的界面便是 Activity 保持在 onResume() 状态。该方法之后是 onPause() 方法。|
+|**onPause**|该方法是在 onResume 之后执行的，此时活动处于暂停状态，不在位于前台，可见但是无法交互。这个方法的执行时间非常短，因此不应该在此方法中执行重量级的资源释放。|
+|**onStop()**|此时活动对用户已经不可见了。紧接着会回调 onRestart() 或者 onDestory()。此时 Activity 处于停止状态，Activity 的实例还是存在的，只是没有被显示。此方法中可以释放对用户不可见时的资源。也可以在此方法中进行数据的保存。|
+|**onRestart()**|表示 Activity 从停止状态重新启动。后面会回调 onStart()|
+|**onDestroy()**|活动被销毁，这是系统生命周期的最后一个回调。一般在这个回调中进行释放所有还未释放的资源。|
+
+官方有给出 Activity 的生命周期图，如下：
+
+![alt text](picture/Activity-pic1.png)     
+
+
+ Acticity 的生命周期会有以下几种异常的情况
+
+- **系统配置发生改变**
+
+比如屏幕的方向发生旋转、该改变语言环境，或者输入设备发生更改。当这些发生时， Activity 会被销毁和重建， Activity 会执行`onPause -> onStop -> onDestory -> onCreate -> onStart -> onResume`。可以在清单文件中为 Acticity 设置 `android:configChanges ` 属性来指定 Activity 在哪些配置改变的情况下不销毁。可选值如下，不同的值用 ' | ' 连接起来，该属性所有的可取值如下
+
+| 值     | 含义                                                         |
+| ------- | ------------------------------------------------------------ |
+| mcc | SIM卡唯一标识IMSI（国际移动用户识别码）中的代码，有三位数组成，中国为460，此项标识mcc代码发生了改变 |
+| mnc | SIM卡唯一标识了IMSI（国际移动用户识别码）中的运营商代码，由两位数组成，中国移动TD系统为00，中国联通为01，中国电信为03，此项标识mnc发生了改变 |
+| locale | 设备本地位置发生了改变，一般指切换了系统语言 |
+| touchscreen | 触摸屏发生了改变，这个很费解，正常情况下无法发生，可以忽略它 |
+| keyboard | 键盘类型发生了改变，比如用户使用了外插键盘 |
+|keyboardHidden|键盘的可问性发生了改变，比如用户调出了键盘|
+|navigation|系统导航方式发生了改变，比如采用了轨迹球导航，这个很难发生，可以忽略它|
+|screenLayout|屏幕布局发生了改变，很可能是用户激活了另一个显示设备|
+|fontStyle|系统的字体缩放比例发生了改变，比如用于选择了一个新的字号|
+|uiMode|用户界面模式发生了改变，比如是否开启了夜间模式（API 8添加）|
+|orientation|屏幕方向发生了改变，这个是最常用的，比如旋转了手机屏幕|
+|screenSize|当屏幕的尺寸信息发生了改变，当旋转设备屏幕时，屏幕尺寸会发生变化，这个选项比较特殊，它和编译选项有关，当编译选项中的minSdkVersion和targetSdkVersion均低于13时，此选项不会导致Activity重启，否则会导致Activity重启（API 13重新添加）|
+|smallestScreenSize|设备的物理尺寸发生了改变，这个项目和屏幕的方向没有关系，仅仅在实际的物理屏幕尺寸改变时的时候发生，比如用户切换到了外部的显示设备，这个选项和screenSize一样，这个选项不会导致Activity重启否则会导致Activity重启|
+|layoutDirection|当布局发现发生变化，这个属性用的比较少，正常情况下无需修改布局的layoutDirection属性（API 17时添加）|
 
 我们常用的只有 locale 、orientation 和 keyboardHidden 这三个选项。当系统配置发生改变时，系统会回调onConfigurationChanged方法。另外，Android 3.2 之后，当设备的方向发生改变时，同时也会触发屏幕的尺寸信息改变，因此 “orientation” 要与 “screenSize” 一起使用才会生效
+
+
+- **系统内存不足。**
+
+系统内存不足时会杀死优先级较低的进程，来为系统腾出空间，该进程所包含的组件（比如 Activity）则会被销毁。
 
 关于系统进程的优先级，Android 根据进程中运行的组件以及其所处的状态对进程做了一个优先级的划分（从高到低）：
 * **前台进程**：用户当前正在使用的进程。一个前台进程需要具备以下条件的任意一个或者几个：
@@ -56,12 +109,58 @@ Activity 的生命周期分为两种情况：一种是正常情况下，一种�
 
 > 注：进程之间的依赖性对进程的优先级也会有影响。比如进程 A 绑定到带有 Context.bind_auto_create标志的服务，那么该服务所在的进程的优先级至少是和 A 进程的优先级一样。
 
-参考：
+## 三、Activity 的启动模式
+Activity 有四种启动模式，分别是 standard 模式，singleTop 模式，singleTask 模式，singleInstance 模式。
 
-《Android 开发艺术探索》第一章
+可以使用 `android:launchMode` 这个属性指定 Activity 的启动模式
 
-[Android Developer Activity](https://developer.android.com/guide/components/activities)
+#### 1. standard 模式
+这种模式下，每次打开 Activity ，不管该 Activity 先前是否存在，都会在启动它的 context 所在的任务栈中创建一个新的实例，如果 context（比如 ApplicationContext） 没有任务栈的话，则会抛异常。
+
+> 什么是任务栈？
+
+Activity 的默认启动模式就是 standard。
+
+#### 2. singleTop 模式
+栈顶复用模式。这种模式下，如果启动的 Activity 位于任务栈的栈顶，则会直接复用该实例。否则创建一个新的实例压入栈中。
+
+通过下面的代码设置该模式：
+```xml
+<activity
+    ....
+    andorid:launchMode="singleTop"/>
+```
 
 
 
-<div align=center><img width="200" height="200" src="https://note.youdao.com/yws/public/resource/123c1bcad5b727fdc43fc19abcdb46f6/xmlnote/BDC8C5FEC02F4B2B865F496EEBD8DFE0/1281"/></div>
+#### 3. singleTask 模式
+栈内复用模式。这种模式下，会直接复用任务栈中已经存在的 Activity 实例，如果找不到，在重新创建一个新的实例。
+
+通过下面的代码设置该模式：
+```xml
+<activity
+    ....
+    andorid:launchMode="singleTask"/>
+```
+
+#### 4. singleInstance 模式
+单例模式。
+
+
+## 总结
+Android 有四大组件，唯一能够被用户感知的组件就是 Activity。
+
+创建一个 Activity 很简单，只需继承系统的 Activity 或者 AppCompatActivity 类即可创建。
+
+Activity 有它的生命周期，每个生命周期的状态都有其对应的回调方法。
+
+## 参考文档
+
+- 《Android 开发艺术探索》第一章
+
+- [Android Developer Activity](https://developer.android.com/guide/components/activities)
+
+
+
+
+<div align=center><img width="200" height="200" src="../other-picture/QRCode.png"/></div>
