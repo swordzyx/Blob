@@ -3,7 +3,7 @@
 Actvity是Android中的四大组件之一，平常我们在手机一个用程序上所看的界面就是 Activity 的表现形式。而且 Activity 也是用户唯一能够感知到的组件，每一个UI的界面就是通过 Activity 显示在屏幕上的，平常我们在软件里进行的各种页面的切换很大一部分是不同 Activity 的跳转。
 
 ## 一、创建一个 Activity
-
+#### 1. 创建一个 Activity 的子类
 创建一个继承自 Activity 的类，即可创建一个 Activity。
 
 ```java
@@ -16,6 +16,8 @@ public class MainActivity extends Activity {
 }
 ```
 
+
+#### 2. 创建布局文件
 Activity 是一个展示型的而组件，我们在 app 中看到的界面在代码里面基本上是一个个的 Activity。在 onCreate 方法中会调用 setContentView() 方法加载一个xml类型的视图文件，这个文件里面定义了我们在界面上看到的内容，比如搜索框，列表等等。上面的代码就是加载了一个 activity_main.xml 文件，代码如下：
 
 ```xml
@@ -42,7 +44,38 @@ Activity 是一个展示型的而组件，我们在 app 中看到的界面在代
 </LinearLayout>
 ```
 
-`<Button>` 标签用于定义一个按钮，上面的代码中定义了两个按钮。运行得到如下的结果：
+`<Button>` 标签用于定义一个按钮，上面的代码中定义了两个按钮。
+
+#### 3. 在清单文件中声明 Activity
+在 AndroidManifest.xml 中声明一个 `<activity>` 标签来声明一个 Activity。这是应用的清单文件，系统根据这个文件来配置应用的组件信息。
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.zero.practiceproject">
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity android:name=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
+```
+- Android:name：这个属性告诉应用声明的是哪个 Activity，其值为 Activity 的完整类名。
+
+#### 4. 运行
+运行得到如下的结果：
 
 <img src="picture\Activity_pic3.png" alt="image-20200302153801973" style="zoom:67%;" />
 
@@ -117,12 +150,115 @@ Activity 有四种启动模式，分别是 standard 模式，singleTop 模式，
 #### 1. standard 模式
 这种模式下，每次打开 Activity ，不管该 Activity 先前是否存在，都会在启动它的 context 所在的任务栈中创建一个新的实例，如果 context（比如 ApplicationContext） 没有任务栈的话，则会抛异常。
 
-> 什么是任务栈？
-
 Activity 的默认启动模式就是 standard。
+
+示例：
+创建两个 Activity，分别命名为 MainActivity 和 FirstActivity，代码如下
+```java 
+public class MainActivity extends Activity {
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        firstActivty = findViewById(R.id.first_activity);
+    }
+
+    public void onClick(View view){
+        Intent intent ;
+        switch (view.getId()){
+            case R.id.first_activity:
+                intent = new Intent(MainActivity.this, FirstActivity.class);
+                startActivity(intent);
+                break;
+            case R.id.main_activity:
+                intent = new Intent(MainActivity.this, MainActivity.class);
+                startActivity(intent);
+                break;
+            default:
+                break;
+        }
+    }
+}
+```
+
+```java
+public class FirstActivity extends Activity {
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        Log.d(TAG, "onCreate()");
+        setContentView(R.layout.activity_first);
+    }
+
+    public void onClick(View view){
+        Intent intent;
+        switch (view.getId()){
+            case R.id.first_activity:
+                intent = new Intent(FirstActivity.this, FirstActivity.class);
+                startActivity(intent);
+                break;
+            case R.id.main_activity:
+                intent = new Intent(FirstActivity.this, MainActivity.class);
+                startActivity(intent);
+                break;
+            default:
+                break;
+        }
+    }
+}
+```
+这两个 Activity 的布局文件内容是一样的，都有两个按钮，当按钮被点击时会回调上面的 onClick 方法，一个会跳转 FirstActivity，一个会跳转 MainActivity 。运行结果如下：
+
+<img src="picture/Activity_pic3.png" height="50%">
+
+这是第一次打开时的界面，点击一下第一个按钮跳转到 FirstActivity，点击第二个按钮跳转到 MainActivity，总共执行三次，然后在命令提示符界面输入下面的命令查看任务栈：
+```shell
+adb shell dumpsys activity activities
+```
+执行结果如下：
+```
+ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)
+Display #0 (activities from top to bottom):
+  Stack #1:
+  ....
+    * TaskRecord{2e84c21 #12 A=com.zero.practiceproject U=0 StackId=1 sz=7}
+      ...
+      * Hist #6: ActivityRecord{9d60aed u0 com.zero.practiceproject/.MainActivity t12}
+          ....
+      * Hist #5: ActivityRecord{a9ad91f u0 com.zero.practiceproject/.FirstActivity t12}
+          ....
+      * Hist #4: ActivityRecord{f891941 u0 com.zero.practiceproject/.MainActivity t12}
+          ....
+      * Hist #3: ActivityRecord{c813fd3 u0 com.zero.practiceproject/.FirstActivity t12}
+          ....
+      * Hist #2: ActivityRecord{bdefd55 u0 com.zero.practiceproject/.MainActivity t12}
+          ....
+      * Hist #1: ActivityRecord{7f05e47 u0 com.zero.practiceproject/.FirstActivity t12}
+          .....
+      * Hist #0: ActivityRecord{aa5745a u0 com.zero.practiceproject/.MainActivity t12}
+          .....
+
+    Running activities (most recent first):
+      TaskRecord{2e84c21 #12 A=com.zero.practiceproject U=0 StackId=1 sz=7}
+        Run #6: ActivityRecord{9d60aed u0 com.zero.practiceproject/.MainActivity t12}
+        Run #5: ActivityRecord{a9ad91f u0 com.zero.practiceproject/.FirstActivity t12}
+        Run #4: ActivityRecord{f891941 u0 com.zero.practiceproject/.MainActivity t12}
+        Run #3: ActivityRecord{c813fd3 u0 com.zero.practiceproject/.FirstActivity t12}
+        Run #2: ActivityRecord{bdefd55 u0 com.zero.practiceproject/.MainActivity t12}
+        Run #1: ActivityRecord{7f05e47 u0 com.zero.practiceproject/.FirstActivity t12}
+        Run #0: ActivityRecord{aa5745a u0 com.zero.practiceproject/.MainActivity t12}
+
+    mResumedActivity: ActivityRecord{9d60aed u0 com.zero.practiceproject/.MainActivity t12}
+    mLastPausedActivity: ActivityRecord{a9ad91f u0 com.zero.practiceproject/.FirstActivity t12}
+.....
+```
+可以看到当前应用所属的任务栈为 Stack#1，id 为 1。里面有 7 个 Activity 实例。第一次进界面时本身就会有一个 MainActivity 实例。
 
 #### 2. singleTop 模式
 栈顶复用模式。这种模式下，如果启动的 Activity 位于任务栈的栈顶，则会直接复用该实例。否则创建一个新的实例压入栈中。
+
+
 
 通过下面的代码设置该模式：
 ```xml
@@ -131,10 +267,10 @@ Activity 的默认启动模式就是 standard。
     andorid:launchMode="singleTop"/>
 ```
 
-
-
 #### 3. singleTask 模式
-栈内复用模式。这种模式下，会直接复用任务栈中已经存在的 Activity 实例，如果找不到，在重新创建一个新的实例。
+栈内复用模式。这种模式下，会直接复用任务栈中已经存在的 Activity 实例，重新回到这个 Activity 时，它的 onNewIntent() 方法会被调用，接着调用 onStart() 和 onResume() 。
+
+如果找不到，在重新创建一个新的实例。
 
 通过下面的代码设置该模式：
 ```xml
@@ -143,11 +279,69 @@ Activity 的默认启动模式就是 standard。
     andorid:launchMode="singleTask"/>
 ```
 
+可以通过在 `<activity>` 标签中设置 `android:taskAffinity` 属性来指定 Activity 所属的任务栈。修改一下 AndroidManifest.xml，将 FirstActivity 的启动模式设置为 “singleTask”，并为其指定 taskAffinity 属性，如下：
+```xml
+<activity android:name=".FirstActivity"
+            android:launchMode="singleTask"
+            android:taskAffinity=":firstActivity">
+</activity>
+```
+其他代码不变，运行之后，点击第一个按钮，然后点击第二个按钮。操作两轮。然后看一下任务栈信息，精简后如下：
+```
+ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)
+Display #0 (activities from top to bottom):
+  Stack #1:
+  ...
+    * TaskRecord{baaaf3 #14 A=com.zero.practiceproject:firstActivity U=0 StackId=1 sz=2}
+        ....
+      * Hist #1: ActivityRecord{56e2909 u0 com.zero.practiceproject/.MainActivity t14}
+          ...
+      * Hist #0: ActivityRecord{57decdd u0 com.zero.practiceproject/.FirstActivity t14}
+        ...
+    * TaskRecord{f086229 #13 A=com.zero.practiceproject U=0 StackId=1 sz=1}
+     
+      * Hist #0: ActivityRecord{542c5ec u0 com.zero.practiceproject/.MainActivity t13}
+    ....
+```
+可以看出，现在这个应用中有两个任务栈，一个为 com.zero.practiceproject:firstActivity，这就是为 FirstActivity 指定的任务栈。另一个是 com.zero.practiceproject，这是应用默认的任务栈。
+
+第一次进入应用的时候，有一个应用默认的任务栈，里面有一个 MainActivity，
+
+- **第一轮操作**
+
+点击第一个按钮跳转到 FirstActivity 之后，便新建了一个 `com.zero.practiceproject:firstActivity` 任务栈，并创建一个 FirstActivity 实例放入其中，接着在 FirstActivity 界面点击按钮跳转到 MainActivity，此时会创建一个新的 MainActivity 实例，压入 `:firstActivity` 栈中，如下图
+
+<center>
+
+![](picture/Activity_pic4.png)
+
+</center>
+
+- **第二轮操作**
+
+现在界面上显示的是 MainActivity，点击按钮跳转 FirstActivity，由于它的栈内复用特性，不会创建新的实例，但是要把它调到前台来，它之上的 MainActivity 就会出栈，栈内的实例如下：
+
+<center>
+
+![](picture/Activity_pic5.png)
+
+</center>
+
+再次跳转到 MainActivity 时，又会重新创建 MainActivity 的实例，此时栈内的实例又会边上第一轮操作的那样。也因此上面打印出的栈的信息中，`com.zero.practiceproject:firstActivity` 这个任务栈中只会有两个实例。
+
+
 #### 4. singleInstance 模式
-单例模式。
+单例模式。这种模式下的 Activity 单独的位于一个任务栈中，每次启动 Activity 时，会先去寻找系统中是否存在实例，如果存在则将 Activity 所在的任务栈调到前台来，这种 Activity 具有全局唯一性。
+
+配置方式：
+```xml
+<activity
+    ....
+    andorid:launchMode="singleInstance"/>
+```
 
 
-## 总结
+## 四、总结
 Android 有四大组件，唯一能够被用户感知的组件就是 Activity。
 
 创建一个 Activity 很简单，只需继承系统的 Activity 或者 AppCompatActivity 类即可创建。
