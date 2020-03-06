@@ -1,6 +1,8 @@
 ### 一、Service 概述
 关于 Service 的介绍，官方文档里面有给详细的说明，它是一个可以再用户看不到的情况下长时间执行某项任务的应用组件。它可以由 Activity 通过调用 `startService()` 方法来启动，也可以跟 Activity 进行绑定，Activity 也可以通过绑定到 Service 来与其进行交互。
 
+#### 1. Service 状态 
+
 一般情况下，Service 会有两种状态：
 * **启动状态**：Activity 调用 startService 启动服务之后， Service 便位于这个状态。这种状态下，服务会在后台无限期的运行，知道服务的任务执行完毕，一般我们启动服务用于执行某项任务，任务执行完了之后便会退出，且不会返回结果。
 * **绑定状态**：应用组件调用了bindService之后，服务就会处于该状态，此时服务会提供一个客户端的示例，通过该示例可以与Service进行交互，一般用于跨进程通信。一个服务可以同时被多个组件绑定，但是只有当所有绑定的组件都销毁是，这个服务才会销毁。
@@ -11,8 +13,22 @@ Android 中的四大组件都是需要在 AndroidManifest.xml 中进行声明了
 
 > 默认情况下，Service是在启动它的应用程序进程中运行的，它不会创建自己的线程，因此如果要执行耗时的任务时，为了不阻塞应用程序的主进程，我们应该在 Service 中开启一个子线程。
 
-### 二、Service 的使用
-#### 继承 Service 类
+#### 2. Service 生命周期
+官方给出的服务生命周期图如下：
+
+<center>
+
+![alt](picture/Service_pic1.png)
+
+</center>
+
+* 正常生命周期从 ```onCreate()``` 到 ```onDestory()``` ，与 Activity 差不多
+* 服务的有效生命周期则是从 ```onStartCommand()``` 或者 ```onBind()``` ，两者分别对应启动服务和绑定服务，启动服务的有效生命周期与整个生命周期同时结束（即回调 onDestory() 时）。而绑定服务的有效生命周期则在 ```onUnbind()``` 返回时结束。
+
+>不管是以何种方式启动服务的，均有可能与客户端进行绑定，因此即使已经使用 onStartCommand() （即客户端调用 startService ）启动的服务仍可以接收对 onBind() 的调用（客户端调用 bindService() ）
+
+### 二、创建 Service
+#### 1. 继承 Service 类
 要创建一个自己的服务很简单，只需继承 Service 类并重写里面的方法即可。示例如下：
 ```java
 public class MyService extends Service{
@@ -58,7 +74,7 @@ public class MyService extends Service{
     * **```START_STICKY```**：表示如果该服务被系统 killed 了，该服务会一直保留启动的状态，在下次创建服务时则一定会重新调用 `onStartCommand()` 方法，即使没有启动服务的命令。
     * **```START_REDELIVER_INTENT```**：如果该服务给系统 killed ，将会重新启动，并且最后一次用于启动服务的 Intent 会被重新传递给它。
 
-#### 在AndroidManifest.xml中声明
+#### 2. 在AndroidManifest.xml中声明
 创建了 Service 的子类以后还要将该服务在清单文件（AndroidManifest.xml）中声明，代码如下：
 ```xml
 <manifest>
@@ -78,7 +94,8 @@ public class MyService extends Service{
 * **android:enabled:** 是否启用该服务，默认为是（true）
 * **android:exported:** 指定服务是否能被其他应用程序所调用。
 
-#### 启动服务
+## 三、启动服务
+#### 1. 启动后台服务
 一般通过将要启动的服务的类名传递到 Intent 中，在将该 Intent 作为 `startService()` 的参数来启动服务的。示例如下：
 ``` java
     Intent startIntent ;
@@ -107,8 +124,19 @@ public class MyService extends Service{
 
 > 从 Android 5.0（API 级别 21）开始，如果使用隐式 `Intent` 调用 `bindService()`，系统会抛出异常。
 
+#### 2. 启动前台服务
 
-#### 停止服务
+前台服务时用户主动意识到的服务，因此在内存不足时，系统也不会销毁它。前台服务必须以在状态栏上提供通知。 Android 提供了 `startForeground(int id,  Notification notification)` 方法来将一个服务变成前台服务，该方法有两个参数：
+* ```id```：通知的唯一标识符，不能为0，整型
+* ```notification```：状态栏的notification 
+
+移除前台服务调用 ```stopForeground()``` ，该方法只是将服务从前台移除，并不会停止服务。可以认为只是降低了服务的优先级。
+
+> Android 9.0 开始，使用前台服务需要申请 `FOREGROUND_SERVICE` 权限。否则将抛出异常。
+
+> 除非是需要用户持续查看的任务，否则尽量不要使用前台服务。一些仅仅是想通知用户的任务，可以使用 `WorkManager`，参考[后台处理指南](https://developer.android.google.cn/guide/background)
+
+## 四、停止服务
 前面也说过一旦服务启动了之后便会一直运行，因此要么会在组件销毁时调用 ```stopService()``` 停止服务，要么在Service的任务执行完毕之后，调动```stopSelf()``` 自行停止，依次来保证系统的资源能够被释放。如果服务同时处理多个 ```onStartCommand()``` ，则应该调用 `stopSelf(int)` 来停止最近的服务请求。
 
 ##### （1）stopService
@@ -125,8 +153,13 @@ if (startIntent != null){
 ```
 
 
+## 五、服务的绑定
+Service 有三种绑定服务的方式。
+- 使用 Binder。这种方式适用于只在本地使用的服务。
+- 使用 Messenger。适用于跨进程多对一通信。所有发送到服务端的请求由单个线程串行处理，不需要考虑服务端的线程安全问题
+- 使用 AIDL。适用于跨进程多对多通信，在服务端可以创建多个线程来分别处理客户端的请求，不过实现起来比较复杂，要处理服务端的线程安全问题。
 
-#### 绑定服务
+#### 1. 使用 Binder 绑定服务
  Android 提供了 ```bindService()``` 来进行服务的绑定，以便于长期连接。服务必须实现 ```onBind()``` 方法才能进行服务的绑定，该方法返回一个 IBinder 接口实例，用于与服务进行通信。当没有组件绑定到服务时，该服务则会被系统销毁。多个客户端可以同时绑定到一个服务，并且可以通过 ```unbindService()``` 来解绑。
 
  如果绑定的服务已经启动了，则在所有的组件解绑以后，服务不会销毁，此时需要服务自己在合适的时机调用 `stopSelf()` 来销毁自身。
@@ -344,28 +377,13 @@ Service 有两种状态，调用 bindService 会使服务进入绑定状态，�
 
 所以 bindService 和 unbindService 配对，startService 和 stopService 配对。
 
+#### 2. 使用 Messenger
+未完待续...
 
 
-### 前台服务
-前台服务时用户主动意识到的服务，因此在内存不足时，系统也不会销毁它。当然前台服务必须以在状态栏上提供通知。 Android 提供了 startForeground(int id,  Notification notification) 方法来将一个服务变成前台服务，该方法有两个参数：
-* ```id```：通知的唯一标识符，不能为0，整型
-* ```notification```：状态栏的notification 
+#### 3. 使用 AIDL
 
-移除前台服务调用 ```stopForeground()``` 
-
-### 服务的生命周期
-官方给出的服务生命周期图如下：
-
-<center>
-
-![alt](picture/Service_pic1.png)
-
-</center>
-
-* 正常生命周期从 ```onCreate()``` 到 ```onDestory()``` ，与 Activity 差不多
-* 服务的有效生命周期则是从 ```onStartCommand()``` 或者 ```onBind()``` ，两者分别对应启动服务和绑定服务，启动服务的有效生命周期与整个生命周期同时结束（即回调 onDestory() 时）。而绑定服务的有效生命周期则在 ```onUnbind()``` 返回时结束。
-
->不管是以何种方式启动服务的，均有可能与客户端进行绑定，因此即使已经使用 onStartCommand() （即客户端调用 startService ）启动的服务仍可以接收对 onBind() 的调用（客户端调用 bindService() ）
+未完待续...
 
 ### IntentService
  IntentService 也是Service的子类，对 Service 做了一定的封装，前面说了如果不手动给 Service 开启一个线程的话，默认会运行在主线程中，这会降低正在运行的Activity的性能。因此 Android 提供了 IntentService ，它会创建独立的 Worker 线程来处理请求。
