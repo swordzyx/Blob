@@ -385,7 +385,10 @@ Service 有两种状态，调用 bindService 会使服务进入绑定状态，�
 
 未完待续...
 
-### IntentService
+## 六、IntentService
+
+> IntentServcie 在 Android 8.1 中被弃用，因为Android 8.1 对其做了后台限制，可以使用 WorkManager 或者 JobIntentServie 代替。
+
  IntentService 也是Service的子类，对 Service 做了一定的封装，前面说了如果不手动给 Service 开启一个线程的话，默认会运行在主线程中，这会降低正在运行的Activity的性能。因此 Android 提供了 IntentService ，它会创建独立的 Worker 线程来处理请求。
 
  IntentService 的使用方法也很简单，只需继承 IntentService 类并重写 `onHandleIntent()` 方法即可
@@ -397,29 +400,105 @@ Service 有两种状态，调用 bindService 会使服务进入绑定状态，�
  * 默认实现 `onBind()`，返回 null
  * 默认实现 `onStartCommand()`，将请求一次发送到工作队列然后在 `onHandleIntent()` 中去处理
 
+
+##### （1）创建 IntentService 的实现类
 ```java
 public class HelloIntentService extends IntentService {
-    public HelloIntentService(){
-        super("HelloIntentService");
+    static final String TAG = "IntentService";
+
+    public HelloIntentService() {
+        super("intent_service");
     }
-    
+
     @Override
-    protected void onHandleIntent(Intent intent){
+    protected void onHandleIntent(@Nullable Intent intent) {
+        Log.d(TAG, "onHandleIntent");
         try{
             Thread.sleep(5000);
         }catch(InterruptedException e){
             Thread.currentThread().interrupt();
         }
     }
-    
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId){
-        Toast.makeText(this, "service starting", Toast.LENGTH_SHORT).show();
-        return super.onStartCommand(Intent intent, int flags);
+        Log.d(TAG, "service starting");
+        return super.onStartCommand(intent, flags, startId);
+    }
+
+    @Override
+    public void onCreate() {
+        Log.d(TAG, "IntentService onCreate");
+        super.onCreate();
+    }
+
+    @Override
+    public void onStart(@Nullable Intent intent, int startId) {
+        Log.d(TAG, "IntentService onStart");
+        super.onStart(intent, startId);
+    }
+
+    @Override
+    public void onDestroy() {
+        Log.d(TAG, "IntentService onDestroy");
+        super.onDestroy();
+    }
+
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) {
+        Log.d(TAG, "IntentService onBind");
+        return super.onBind(intent);
     }
 }
-
 ```
+
+> 自定义的 IntentService 类一定要有一个无参的构造函数，否则在启动时会抛异常。
+
+##### （2）在 AndroidManifest.xml 中声明 servcie
+```xml
+<service android:name=".service.HelloIntentService"
+            android:enabled="true"/>
+```
+
+##### （3）启动 HelloIntentServcie
+```java
+case R.id.start_intent_servcie:
+    Intent startIntentService = new Intent(ServiceActivity.this, HelloIntentService.class);
+    startService(startIntentService);
+    break;
+```
+
+##### （4）运行
+打印日志如下
+```
+2020-03-09 17:22:02.629 2090-2090/com.zero.practiceproject D/IntentService: IntentService onCreate
+2020-03-09 17:22:02.630 2090-2090/com.zero.practiceproject D/IntentService: service starting
+2020-03-09 17:22:02.630 2090-2090/com.zero.practiceproject D/IntentService: IntentService onStart
+2020-03-09 17:22:02.630 2090-2123/com.zero.practiceproject D/IntentService: onHandleIntent
+2020-03-09 17:22:07.631 2090-2090/com.zero.practiceproject D/IntentService: IntentService onDestroy
+```
+在 onHandleIntent 方法中让线程休眠了 5s，可以看到在 onHandleIntent 打印出来 5s 之后，自动执行了 onDestroy() 方法，也就是说 IntentService 在执行完任务之后不用我们手动销毁，它会自动停止。
+
+
+## 七、JobIntentServcie
+JobIntentServcie 是 Android 8.1 被添加进来的。它位于 AndroidX 支持库中。
+
+其定义如下
+```java
+public abstract class JobIntentService extends Service 
+```
+
+
+#### 小结
+- 在 Android 8.0 及以上的版本中通过 JobScheculer.enqueue 以作业的形式进行派发，Android 8.0 以下则使用 startServcie 进行启动
+
+- 通过创建 JobIntentService 的子类来创建一个 JobIntentService 。
+
+- 通过 enqueueWork(Context, Class, int, Intent) 来提交一个新的任务请求，在 onHandleIntent 中处理请求
+
+- 使用 JobIntentService 时，如果要处理的任务是需要唤醒系统的，它会自动为我们处理唤醒锁，而不需要我们使用 PowerManager 来手动申请。
+
 
 ### 参考文档
 
