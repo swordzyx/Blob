@@ -1,4 +1,4 @@
-### 一、Service 概述
+## 一、Service 概述
 关于 Service 的介绍，官方文档里面有给详细的说明，它是一个可以再用户看不到的情况下长时间执行某项任务的应用组件。它可以由 Activity 通过调用 `startService()` 方法来启动，也可以跟 Activity 进行绑定，Activity 也可以通过绑定到 Service 来与其进行交互。
 
 #### 1. Service 状态 
@@ -27,7 +27,7 @@ Android 中的四大组件都是需要在 AndroidManifest.xml 中进行声明了
 
 >不管是以何种方式启动服务的，均有可能与客户端进行绑定，因此即使已经使用 onStartCommand() （即客户端调用 startService ）启动的服务仍可以接收对 onBind() 的调用（客户端调用 bindService() ）
 
-### 二、创建 Service
+## 二、创建 Service
 #### 1. 继承 Service 类
 要创建一个自己的服务很简单，只需继承 Service 类并重写里面的方法即可。示例如下：
 ```java
@@ -482,25 +482,94 @@ case R.id.start_intent_servcie:
 
 
 ## 七、JobIntentServcie
-JobIntentServcie 是 Android 8.1 被添加进来的。它位于 AndroidX 支持库中。
+#### 1. 简介
+JobIntentServcie 是 Android 8.0 被添加进来的。它位于 AndroidX 支持库中。根据 Google 的描述，它在 Android 8.0 以前会通过 startServcie 来以服务的形式运行。而在 Android 8.0 及以后则是以 Job 的形式，通过 JobScheculer.enqueue 来提交任务。
+
+使用 JobIntentService 的方式很简单，通过创建 JobIntentService 的子类来创建一个 JobIntentService 。使用 `enqueueWork(Context, Class, int, Intent)` 提交的任务会在 `onHandleIntent` 中进行处理
+
+使用 JobIntentService 会自动判断是否需要唤醒系统，这就省去了我们使用 PowerManager 手动申请唤醒锁的工作。
+
 
 其定义如下
 ```java
-public abstract class JobIntentService extends Service 
+public abstract class JobIntentService extends Service {
+
+}
 ```
 
+#### 2. 使用步骤
+- 首先需要在 AndroidManifest.xml 声明 `WAKE_LOCK` 权限
 
-#### 小结
-- 在 Android 8.0 及以上的版本中通过 JobScheculer.enqueue 以作业的形式进行派发，Android 8.0 以下则使用 startServcie 进行启动
+```xml
+<uses-permission android:name="android.permission.WAKE_LOCK"/>
+```
 
-- 通过创建 JobIntentService 的子类来创建一个 JobIntentService 。
+- 实现一个 `JobIntentService` 的子类
 
-- 通过 enqueueWork(Context, Class, int, Intent) 来提交一个新的任务请求，在 onHandleIntent 中处理请求
+```java
+public class TestJobIntentService extends JobIntentService {
+    private static final String TAG = "TestJobIntentService";
 
-- 使用 JobIntentService 时，如果要处理的任务是需要唤醒系统的，它会自动为我们处理唤醒锁，而不需要我们使用 PowerManager 来手动申请。
+    @Override
+    protected void onHandleWork(@NonNull Intent intent) {
+        String data = intent.getStringExtra("data");
+        Log.d(TAG, "start handle work : " + data);
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        Log.d(TAG, "end handle work : " + data);
+    }
+
+    @Override
+    public void onCreate() {
+        Log.d(TAG, "onCreate");
+        super.onCreate();
+    }
+
+    @Override
+    public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
+        Log.d(TAG, "onStartCommand");
+        return super.onStartCommand(intent, flags, startId);
+    }
+
+    @Override
+    public IBinder onBind(@NonNull Intent intent) {
+        Log.d(TAG, "onBind");
+        return super.onBind(intent);
+    }
+
+    @Override
+    public void onDestroy() {
+        Log.d(TAG, "onDestroy");
+        super.onDestroy();
+    }
+}
+```
+
+- 向 `JobIntentService` 提交任务
+
+```java
+Intent jobIntentService = new Intent();
+jobIntentService.putExtra("data", "data");
+TestJobIntentService.enqueueWork(this, TestJobIntentService.class, 100, jobIntentService);
+```
+
+- 运行
+
+```log
+2020-03-10 17:18:57.233 1959-1959/com.zero.practiceproject D/TestJobIntentService: onCreate
+2020-03-10 17:18:57.233 1959-1959/com.zero.practiceproject D/TestJobIntentService: onStartCommand
+2020-03-10 17:18:57.236 1959-1991/com.zero.practiceproject D/TestJobIntentService: start handle work : data
+2020-03-10 17:19:02.237 1959-1991/com.zero.practiceproject D/TestJobIntentService: end handle work : data
+2020-03-10 17:19:02.238 1959-1959/com.zero.practiceproject D/TestJobIntentService: onDestroy
+```
+
+根据日志可以看出，其实 JobIntentService 也是会单独开辟一个线程执行任务，并且执行完之后会自动销毁。
 
 
-### 参考文档
+## 八、参考文档
 
 * [Android Developers Service](https://developer.android.com/guide/components/services)
 * 《第一行代码》 郭霖著
