@@ -97,8 +97,8 @@ Android 中的广播主要是用来在不同的组件间传递消息用的。 ap
 ### 3. 发送广播
 
 Android 有三种发送广播的方式
-- **sendOrderedBroadcast(Intent, String)**。用于发送有序广播。通过该方法发送的广播首先会被优先级最高的广播接收器执行，然后在传递到下一个广播。也可以通过 abortBroadcast() 来终止广播的传递。广播的优先级可以通过 <intent-filter> 标签的 android:priority 属性来指定。如果两个广播接收器有相同的优先级，对于不同类型的广播，会优先执行动态注册的广播接收器。如果同为动态的，则优先执行先注册的。同为静态广播则优先执行先扫描到的（类似于随机）。
-- **sendBroadcast(Intent intent)**。向所有广播接收器发送广播，不带顺序。也叫作普通广播。该方法发送的广播不会被某一个广播接收器所终止
+- **sendOrderedBroadcast(Intent, String)**。用于发送有序广播。通过该方法发送的广播首先会被优先级最高的广播接收器执行，然后在传递到下一个广播。也可以通过 abortBroadcast() 来终止广播的传递。广播的优先级可以通过 `<intent-filter>` 标签的 android:priority 属性来指定。如果两个广播接收器有相同的优先级，对于不同类型的广播，会优先执行动态注册的广播接收器。如果同为动态的，则优先执行先注册的。同为静态广播则优先执行先扫描到的（类似于随机）。
+- **sendBroadcast(Intent intent)**。向所有广播接收器发送广播，不带顺序。也叫作普通广播。该方法发送的广播不会被某一个广播接收器所终止。
 - **LocalBroadcastManager.sendBroadcast(Intent)**。该方法发送的广播仅限于在同一个应用中进行消息传递，也叫作本地广播。这种广播效率要比其他两种好，并且不需要担心由广播的发送和接收所带来的的安全问题。如果 app 中不需要像外界发送广播，建议使用本地广播。
 
 
@@ -145,7 +145,7 @@ Android 有三种发送广播的方式
 - 如果不需要向应用程序以外的 app 或者组件发送广播，建议使用 LocalBroadcastManager 。因为使用 LocalBroadcastManager 的效率更高。能避免了由于向外部发布或者接收广播所导致的安全问题。另外，使用 LocalBroadcastManager 能减少系统的开销
 - 尽量动态注册广播接收器。因为可能会存在多个不同的 app 注册了相同的广播的情况，此时可能会因为启动大量的 app 而对设备的性能造成重大影响。而且 Android 中有些广播只会发送给动态注册的广播接收器，比如 CONNECTIVITY_ACTION。
 - 不要使用隐式的广播传递敏感的信息，这样可能会导致敏感信息的泄漏。可以通过指定权限、指定包名来控制谁可以接收该广播，或者直接使用 LocalBroadcastManager 来发送本地广播
-- 为了防止受到别的 app 所发送的恶意广播，可以在注册广播接收器是指定权限，或者将 <receiver> 标签的 android:exported 属性置为false。来控制谁可以向你发送广播。也可以使用 `LocalBroadcastManager.registerReceiver(BroadcastReceiver receiver, IntentFilter filter) `来将广播接收器限制为仅可接收本地广播
+- 为了防止受到别的 app 所发送的恶意广播，可以在注册广播接收器是指定权限，或者将 `<receiver>` 标签的 android:exported 属性置为false。来控制谁可以向你发送广播。也可以使用 `LocalBroadcastManager.registerReceiver(BroadcastReceiver receiver, IntentFilter filter) `来将广播接收器限制为仅可接收本地广播
 - BroadcastReceiver 的 onReceive() 必须在很短的时间内执行完，否则会触发应用程序无响应。可以在 onReceive() 中方法中使用 goAsync() 或者 JobSchedule 调度一个作业来开启线程。开启线程需要谨慎的。也可以在 onReceive() 中开启一个后台服务
 - 尽量不要在 onReceive() 中开启活动，想一想玩手机玩的好好地，突然给调到另一个界面，会不会很想卸载那个应用。可以采用显示通知的方式。
 
