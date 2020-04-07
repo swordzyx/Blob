@@ -1,38 +1,38 @@
 ## 一、简介
-ContentProvider 是 Android 提供的一套标准接口，主要用于管理应用存储的数据，并且为外部应用提供数据访问的接口。可以通过 ContentProvider 方便的实现与其他应用程序数据的共享。并且 ContentProvider 提供了数据的安全机制，可以指定哪部分的数据对外公开，哪些数据隐藏。
+内容提供程序是应用程序向外部应用公开数据的一个组件。它本身是不提供数据存储的实现的，只是为应用中的数据提供一套接口来方便别的应用访问。
 
-ContentProvider 是 Android 系统数据访问的一个抽象，可以使用 ContentProvider 访问不同的数据源（比如音频，文件等等），同样如果开发者对应用的数据存储实现做了某些修改，对数据的访问接口不会有影响。
+它将可以被公开的数据以数据库的表的形式向外部应用程序公开。每一列代表一个字段或者属性，每一行表示一条记录或者一个实体信息。如果某些数据不想公开，可以不提供对于这些数据的访问接口即可。
 
-## 一、访问内容提供程序
+并且在内容提供程序中可以为数据设定权限，只有具有该权限的应用才能够请求数据，这样可以提高数据的安全性。
 
-Android 系统提供了内置的内容提供程序，比如联系人，通话记录等，可以通过 ContentResolver 对象访问这些数据。ContentResolver 提供了对内容提供程序的访问，应用通过 ContentResolver 提交数据访问请求，并且接收来自 ContentProvider 返回的结果，这些请求包括基本的 CURD （增删改查）操作。
+#### 1. 支持的数据类型
+内容提供程序支持对下面的数据类型的访问
+- 整型
+- 长整型
+- 浮点型
+- 长浮点型（双精度）
+- BLOB：该类型用于存储二进制的大型对象
 
-#### 1. 查询数据
-ContentResolver 提供了以下方法来访问数据：
-```java
-1. public final Cursor query (Uri uri, 
-                String[] projection, 
-                Bundle queryArgs, 
-                CancellationSignal cancellationSignal)
+#### 2. 作用
+内容提供程序主要被用来管理跨应用之间数据的访问。
 
-2. public final Cursor query (Uri uri, 
-                String[] projection, 
-                String selection, 
-                String[] selectionArgs, 
-                String sortOrder, 
-                CancellationSignal cancellationSignal)
+有两个特点来支持应用之间的数据交互
+- 一套标准的接口。有两个角色参与交互，一个是提供程序，一个是请求数据的客户端。提供程序实现一套标准的接口，客户端通过这个标准的接口进行数据请求
+- 跨进程。ContentProvider 本身就是一个跨进程的组件，可以非常方便的进行跨进程的数据交互。
 
-3. public final Cursor query (Uri uri, 
-                String[] projection, 
-                String selection, 
-                String[] selectionArgs, 
-                String sortOrder)
-```
-上面三个函数的作用一样都是用于
+#### 3. 它的意义
+个人猜测，Android 的大部分组件和 API 都要对数据进行访问，并且这些组件和 API 未必会在同一个进行，使用单纯的数据库或者文件形式很容易产生线程同步问题，而且这个组件用这个接口访问数据，那个组件用那个接口访问数据，代码难以维护，也会造成代码的冗余。因此就需要将数据的访问单独拎出来，这样方便维护而且增加了组件的复用
 
-## 二、创建一个内容提供程序
 
-如果应用程序需向其他进程提供数据，使用内容提供程序会好一些，如果仅仅只是在应用内使用的话则不需要。
+
+## 二、访问内容提供程序
+
+有两种方式来访问提供程序中的数据
+
+#### 1. 通过 ContentResolver 访问
+##### （1）查询数据
+
+
 
 
 
