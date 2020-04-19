@@ -94,7 +94,85 @@ MainActivity 中的代码
 ```java
 public final int update (Uri uri, ContentValues values, String where, String[] selectionArgs)
 ```
-- `values`：
+- `values`：新数据以键值对的形式保存在这个参数中
+- `where `：如果数据中某些属性为特定的值时，则更新该数据行。该参数指定了过滤的属性
+- `selectionArgs`：这是一个数组，数组中的值则一一为上面的过滤属性赋值。
+
+##### demo
+```
+MainActivity 中的代码
+```
+
+#### 4. 插入数据
+通过 ContentResolver 提供的 insert() 方法插入数据
+```java
+public final Uri insert (Uri url, ContentValues values)
+```
+- `values`：数据以行的形式插入，要插入的数据以键值对的形式保存在 ContentValues 中，键表示一行数据中的列属性，值则代表属性对应的值。
+
+##### demo
+```
+MainActivity 中的代码
+```
+
+#### 5. 批量访问数据
+顾名思义，批量访问就是一次可以操作多行数据。
+
+要执行的操作保存在一个 ContentProviderOperation 对象数组中。
+
+然后通过 ContentResolver.applyBatch() 方法将这些请求发送给内容提供程序，由它进行处理。该函数的声明如下
+```java
+public ContentProviderResult[] applyBatch (String authority,  ArrayList<ContentProviderOperation> operations)
+```
+可以看到，里面有一个 ContentProviderOperation 数组列表的参数，也就是我们创建的 ContentProviderOperation 对象数组了。该函数会返回一个 ContentProviderResult 数组，内容提供程序返回的结果就保存在这个数组中
+
+##### demo
+
+## 三、通过 Intent 访问
+
+直接发送给内容提供程序：这种方法通常用在不具备访问提供程序的权限时，可以通过申请临时权限的方式来访问数据，只需在 Intent 中设置相应的标志位（flag）即可。
+
+发送给第三方应用：另外也可以发送一个请求数据的 Intent（字面意思为意图）到具有权限的应用，然后这个应用根据请求向内容提供程序发送相应的数据请求，然后将操作结果返回给请求的应用。
+
+```java
+MainActivity.java 中的代码。
+```
+
+## 四、创建内容提供程序
+#### 1. 确定需求
+首先需要确定是否真的需要在应用中使用内容提供程序，如果不满足下面条件中的任何一条，那么使用内部的数据存储就足够了
+- 应用中的数据是否需要被别的进程所访问。换句话说就是别的应用是否被允许访问你应用中的数据。
+- 官方提出的条件
+    - 应用中需要使用搜索框架。
+    - 向其他应用或者控件提供数据
+    - 应用中有类需要实现 AbstractThreadedSyncAdapter 、CursorAdapter 或 CursorLoader 类。
+
+
+#### 2. 前期准备
+##### （1）内容提供程序提供对以下数据的存储
+- 文件数据
+
+以文件的形式存储在设备中的数据，比如图片，音频，视频等，文件一般会被存储在应用的私有空间中。外界如果要访问，则是向内容提供程序提交访问请求，获得文件句柄。
+
+Android 提供了各种面向文件的 API。如要设计提供媒体相关数据（如音乐或视频）的提供程序，可以开发合并表数据和文件的提供程序。
+
+- 结构化数据
+
+指存储在数据库（Android 中一般使用的是 SQLite 数据库。数据库和文件是两个不同的东西）中的数据，它们通常以表的形式存在，每一行代表一个实体，每一列代表实体中的一个属性。
+
+一般在 Android 中采用关系型数据库（如 SQLite）或非关系型键值数据存储区（如 LevelDB）来处理结构化数据。可以在内容提供程序中混合使用记中不同的数据存储技术
+
+
+##### （2）Android 中的数据存储技术
+- 使用 Room 持久化库，它提供对 SQLite 数据库 API 的访问权限，而 Android 自有提供程序可使用 SQLite 数据库 API 存储面向表格的数据。如果要使用 Room 创建数据库，需要将 RoomDatabase 的子类实例化。
+
+- 通过使用 java.net 和 android.net 中的类来访问网络数据，也可以将网络数据同步到本地数据存储，以表格或者文件的形式存储
+
+##### （3）注意事项
+
+
+#### 3. 创建内容提供程序
+
 
 
 
