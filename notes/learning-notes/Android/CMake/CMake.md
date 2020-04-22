@@ -284,6 +284,79 @@ cmake -E <command> [<options>]
 	- `j`：将归档文件压缩成 bzip2 格式
 	- `J`：将归档文件压缩成 XZ 格式
 	- `--zstd`：将归档文件压缩成 Zstandard 格式
-	- `--files-from=<file>`：逐行输出 `<file>` 中指定的文件名，忽略空行，除了在使用 `--add-file=<name>` 的时候可以使用
+	- `--files-from=<file>`：逐行输出 `<file>` 中指定的文件名，忽略空行，除了在使用 `--add-file=<name>` 的时候可以使用以“-” 开头命名的文件之外，其他命令中的文件名不能以“-”开头
+    - `--mtime=<date>`：指定压缩包中的更改的时间。
+    - `--`：停止解释选项，并将所有剩余参数视为文件名，即使它们以-开头。
+    - `time <command> [<args>...]`：运行执行并显示执行时间
+    - `touch <file>...`：如果文件不存在则创建文件，如果文件存在，则更改文件的最后访问以及修改时间
+    - `touch_nocreate <file>...`：如果文件存在则访问并变更其访问时间和修改时间，如果文件不存在，则忽略该命令
+    - `true`：不执行任何操作，退出代码为0。
 
 > 查了一下网上，archive 的意思是存档文件，存档的意思。那就称之为存档文件吧。
+
+## 十、特定于 Windows 的命令行工具
+以下的 `cmake -E` 仅在 Windows 下可用
+- **`delete_regv <key>`**：删除Windows注册表值。
+
+- **`env_vs8_wince <sdkname>`**：显示一个设置在环境中批处理文件，这个文件用于提供安装在 VS2005 上的 Window CE SDK。
+
+- **`env_vs9_wince <sdkname>`**：显示一个设置在环境中批处理文件，这个文件用于提供安装在 VS2008 上的 Window CE SDK。
+
+- **`write_regv <key> <value>`**：写入 Windows 注册表值。
+
+## 十一、运行查找包工具
+CMake 为基于 Makefile 的项目提供了一个类似于住手的 pkg-config ：
+```
+cmake --find-package [<options>]
+```
+
+该命令通过 `find_package()` 函数来查找包，并将结果打印到标准输出中。它可以代替 `pdk-config` 来查询项目中的的安装库，可以是基于 CMake 的普通项目，也可以是基于自动安装的项目。
+
+> 注意：由于某些技术限制，该模式不受很好的支持。保留它是出于兼容性考虑，但不应在新项目中使用。
+
+## 十二、查看帮助
+使用下面的命令打印 CMake 中选择的页面：
+```
+cmake --help[-topic]
+```
+
+可以使用下面的操作项
+- **`--help,-help,-usage,-h,-H,/?`**：打印使用情况信息并退出。用法描述了基本的命令行接口及其操作项
+
+- **`--version,-version,/V [<f>]`**：显示程序的名字/版本标题并退出。如果指定了文件，则将版本写入其中。 如果给出帮助，则将打印到名为<f> ile的文件。
+
+- **`--help-full [<f>]`**：打印所有帮助手册并退出。所有的手册会打印成可供人类阅读的文本格式。如果指定了`<f>`，那么帮助信息会打印到该参数指定的文件中。
+
+- **`--help-manual <man> [<f>]`**：打印一份帮助手册并退出，该帮助手册会被打印成可供人类阅读的文本格式。如果指定了`<f>`，那么帮助信息会打印到该参数指定的文件中。
+
+- **`--help-manual-list [<f>]`**：列出所有可用的帮助手册，并退出。该列表包含所有手册，可以使用--help-manual选项后接手册名称来获取帮助。 如果给出帮助，则将打印到名为<f> ile的文件。
+
+- **`--help-command <cmd> [<f>]`**：打印指定命令的帮助信息并退出。[cmake-commands(7)](https://cmake.org/cmake/help/v3.17/manual/cmake-commands.7.html#manual:cmake-commands(7)) 手册中 `<cmd>` 项将会以可供人阅读的方式被打印。如果指定了 `<f>` ，则会打印到以 `<f>ile` 命名的文件中。
+
+- **`--help-command-list [<f>]`**：列出具有可用帮助的命令，然后退出。列表包含所有可通过使用--help-command选项后跟命令名称获得帮助的命令。 如果给出帮助，则将打印到名为`<f> ile`的文件。
+
+- **`--help-commands [<f>]`**：Print cmake-commands manual and exit. The cmake-commands(7) manual is printed in a human-readable text format. The help is printed to a named `<f>ile` if give
+
+- **`--help-module <mod> [<f>]`**: Print help for one module and exit. The cmake-modules(7) manual entry for `<mod>` is printed in a human-readable text format. The help is printed to a named `<f>ile` if given.
+
+- **`--help-module-list [<f>]`**: List modules with help available and exit. The list contains all modules for which help may be obtained by using the --help-module option followed by a module name. The help is printed to a named `<f>ile` if given.
+
+- **`--help-modules [<f>]`**: Print cmake-modules manual and exit. The cmake-modules(7) manual is printed in a human-readable text format. The help is printed to a named `<f>ile` if given.
+
+- **`--help-policy <cmp> [<f>]`**: Print help for one policy and exit. The cmake-policies(7) manual entry for `<cmp>` is printed in a human-readable text format. The help is printed to a named `<f>ile` if given.
+
+- **`--help-policy-list [<f>]`**: List policies with help available and exit. The list contains all policies for which help may be obtained by using the --help-policy option followed by a policy name. The help is printed to a named `<f>ile` if given.
+
+- **`--help-policies [<f>]`**: Print cmake-policies manual and exit. The cmake-policies(7) manual is printed in a human-readable text format. The help is printed to a named `<f>ile` if given.
+
+- **`--help-property <prop> [<f>]`**: Print help for one property and exit. The cmake-properties(7) manual entries for `<prop>` are printed in a human-readable text format. The help is printed to a named `<f>ile` if given.
+
+- **`--help-property-list [<f>]`**: List properties with help available and exit. The list contains all properties for which help may be obtained by using the --help-property option followed by a property name. The help is printed to a named `<f>ile` if given.
+
+- **`--help-properties [<f>]`**: Print cmake-properties manual and exit. The cmake-properties(7) manual is printed in a human-readable text format. The help is printed to a named `<f>ile` if given.
+
+- **`--help-variable <var> [<f>]`**: Print help for one variable and exit. The cmake-variables(7) manual entry for `<var>` is printed in a human-readable text format. The help is printed to a named `<f>ile` if given.
+
+- **`--help-variable-list [<f>]`**: List variables with help available and exit. The list contains all variables for which help may be obtained by using the --help-variable option followed by a variable name. The help is printed to a named `<f>ile` if given.
+
+- **`--help-variables [<f>]`**: Print cmake-variables manual and exit. The cmake-variables(7) manual is printed in a human-readable text format. The help is printed to a named `<f>ile` if given.
