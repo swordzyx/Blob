@@ -53,7 +53,8 @@ CMake 也提供了打包和测试项目的命令行工具，参考 [ctest](https
 #### 1. 配置基本信息
 运行下面列出的命令中的任何一个来指定源码树，构建树以及生成构建系统。
 
-##### （1）`cmake [<options>] <path-to-source>`
+- **（1）`cmake [<options>] <path-to-source>`**
+
 该命令指定当前工作目录作为构建树。`<path-to-source>` 指定了源码树，这个指定的路径可以是绝对路径或者相对于当前工作目录的路径。源码目录下必须包含一个 `CMakeLists.txt`，并且不能包含 `CMakeCache.txt` 文件，因为后者用于标识一个已存在的构建树，也就是这个文件是在构建的过程中自动生成的。
 
 示例：下面的命令指定了 build/src 目录作为源码目录。
@@ -62,7 +63,8 @@ $ mkdir build ; cd build
 $ cmake ../src
 ```
 
-##### （2）`cmake [<options>] <path-to-existing-build>`
+- **（2）`cmake [<options>] <path-to-existing-build>`**
+
 使用 `<path-to-existing-build>` 作为构建树，从构建树目录下的 `CMakeCache.txt` 文件加载出源码树目录，这要求之前运行过 `cmake` 命令来生成这个文件。指定的构建树目录可以是绝对路径，也可以是相对于当前目录的相对路径
 
 示例：
@@ -73,7 +75,8 @@ $ cmake .
 
 > 也就是说如果之前已经构建过了，可以通过这个命令来直接再次构建，而不需要再次指定源码目录
 
-##### （3）`cmake [<options>] -S <path-to-source> -B <path-to-build>`
+- **（3）`cmake [<options>] -S <path-to-source> -B <path-to-build>`**
+
 使用 `<path-to-source>` 作为源码树路径，使用 `<path-to-build>` 作为构建树路径。源码目录下必须有一个 `CMakeLists.txt` 文件。如果指定的构建目录不存在，则构建过程中会自动生成构建目录
 
 示例：
@@ -81,8 +84,9 @@ $ cmake .
 $ cmake -S src -B build
 ```
 
-##### （4）构建
-在构建系统生成了之后，要使用相应的本地构建工具来构建项目。例如，在使用了 Unix MakeFiles 生成器生成了构建系统之后可以直接运行 `make` 命令
+-= **（4）构建**
+
+在构建系统基本信息配置完成了之后，可以使用相应的本地构建工具来构建项目。例如，在使用了 Unix MakeFiles 生成器生成了构建系统之后可以直接运行 `make` 命令
 ```
 $ make
 $ make install
@@ -90,7 +94,7 @@ $ make install
 
 也可以使用 cmake 来自动选择合适的本地构建工具来生成项目。
 
-#### 2. 操作
+#### 2. 操作选项
 上面命令中的 `[options]` 可以由0个或者多个下面列出的操作组成
 - **`-S <path-to-source>`**：源码的根目录
 
