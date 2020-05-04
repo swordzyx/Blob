@@ -1,5 +1,6 @@
 CMake 中的命令有以下几类
 
+<<<<<<< HEAD
 ## 一. Scripting Commands（脚本命令）
 可用的脚本命令如下：
 #### 1. `break`
@@ -9,6 +10,17 @@ CMake 中的命令有以下几类
 
 
 #### 3. `cmake_minimum_required`
+=======
+#### 1. Scripting Commands（脚本命令）
+可用的脚本命令如下：
+- **`break`**
+
+
+- **`cmake_host_system_information`**
+
+
+- **`cmake_minimum_required`**
+>>>>>>> 77d78f42c195851f2de9f586457020c3edfd25e7
 
 用于请求 Cmake 的最小版本。该命令格式如下
 ```
@@ -45,6 +57,7 @@ cmake_policy(VERSION 2.4[...<max>])
 
 上面的命令兼容了 CMake 2.4 及以下的版本。
 
+<<<<<<< HEAD
 - 4. `cmake_parse_arguments`
 - 5. `cmake_policy`
 - 6. `configure_file`
@@ -52,6 +65,15 @@ cmake_policy(VERSION 2.4[...<max>])
 - 8. `else`
 - 9. `elseif`
 - 10. `endforeach`
+=======
+- `cmake_parse_arguments`
+- `cmake_policy`
+- `configure_file`
+- `continue`
+- `else`
+- `elseif`
+- `endforeach`
+>>>>>>> 77d78f42c195851f2de9f586457020c3edfd25e7
 - `endfunction`
 - `endif`
 - `endmacro`
@@ -80,10 +102,13 @@ cmake_policy(VERSION 2.4[...<max>])
 - `option`
 - `return`
 - `separate_arguments`
+<<<<<<< HEAD
 #### 39. `set`
 设置指定的正常变量，缓存变量或者环境变量为给定的值，
 
 
+=======
+>>>>>>> 77d78f42c195851f2de9f586457020c3edfd25e7
 - `set_property`
 - `site_name`
 - `string`
@@ -91,7 +116,11 @@ cmake_policy(VERSION 2.4[...<max>])
 - `variable_watch`
 - `while`
 
+<<<<<<< HEAD
 ## 二. Project Commands（项目命令）
+=======
+#### 2. Project Commands（项目命令）
+>>>>>>> 77d78f42c195851f2de9f586457020c3edfd25e7
 下面的命令仅仅在基于 CMake 的项目中使用
 - `add_compile_definitions`
 - `add_compile_options`
@@ -122,6 +151,7 @@ cmake_policy(VERSION 2.4[...<max>])
 - `link_directories`
 - `link_libraries`
 - `load_cache`
+<<<<<<< HEAD
 
 #### 30. `project`
 
@@ -178,6 +208,9 @@ CMakeList.txt 文件的顶层必须包含对于 `project()` 的直接调用，�
 
 
 
+=======
+- `project`
+>>>>>>> 77d78f42c195851f2de9f586457020c3edfd25e7
 - `remove_definitions`
 - `set_source_files_properties`
 - `set_target_properties`
