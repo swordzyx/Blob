@@ -141,7 +141,7 @@ file(GET_RUNTIME_DEPENDENCIES
   [POST_EXCLUDE_REGEXES [<regexes>...]]
   )
 ```
-
+递归获取给定文件所依赖的库列表。
 
 
 
