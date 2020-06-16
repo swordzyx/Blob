@@ -57,7 +57,9 @@ cmake_policy(VERSION 2.4[...<max>])
 #### 13. `endmacro`
 #### 14. `endwhile`
 #### 15. `execute_process`
-#### 16. `file`
+#### 16. `file` 
+> https://cmake.org/cmake/help/latest/command/file.html
+
 文件操作命令
 ##### （1）概要
 - `Reading`
@@ -142,7 +144,6 @@ file(GET_RUNTIME_DEPENDENCIES
   )
 ```
 递归获取给定文件所依赖的库列表。不过该命令应该用在 `install(CODE)` 或 `install(SCRIPT)` 命令块中，如下
-
 ```
 install(CODE [[
   file(GET_RUNTIME_DEPENDENCIES
@@ -152,12 +153,12 @@ install(CODE [[
 ```
 可以使用以下参数
 - `RESOLVED_DEPENDENCIES_VAR <deps_var>`：存储已解析依赖项列表的变量的名称。（原文：Name of the variable in which to store the list of resolved dependencies.）
-
 - `UNRESOLVED_DEPENDENCIES_VAR <unresolved_deps_var>`：存储未解析依赖项列表中的变量名称，如果没有指定该变量，并且存在未解析的依赖项，会报出一个错误。
-
 - `CONFLICTING_DEPENDENCIES_PREFIX <conflicting_deps_prefix>`：存储冲突依赖项的名称前缀，如果在两个不同的目录中找到两个具有相同名称的文件，则依赖关系会发生冲突。 冲突的文件名列表存储在`<conflicting_deps_prefix>_FILENAMES`中。对于每个文件名，为该文件名找到的路径列表存储在`<conflicting_deps_prefix>_<filename>` 中。（原文：Variable prefix in which to store conflicting dependency information. Dependencies are conflicting if two files with the same name are found in two different directories. The list of filenames that conflict are stored in `<conflicting_deps_prefix>_FILENAMES`. For each filename, the list of paths that were found for that filename are stored in `<conflicting_deps_prefix>_<filename>.`）
-
 - `EXECUTABLES <executable_files>`：
+- `MODULES <module_files>`：
+- `DIRECTORIES <directories>`
+- `BUNDLE_EXECUTABLE <bundle_executable_file>`
 
 
 
