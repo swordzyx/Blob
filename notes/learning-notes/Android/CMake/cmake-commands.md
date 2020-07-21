@@ -141,29 +141,29 @@ set(ENV{<variable>} [<value>])
 
 ## 二. Project Commands（项目命令）
 下面的命令仅仅在基于 CMake 的项目中使用
-#### 1. `add_compile_definitions`
-#### 2. `add_compile_options`
-#### 3. `add_custom_command`
-#### 4. `add_custom_target`
-#### 5. `add_definitions`
-#### 6. `add_dependencies`
-#### 7. `add_executable`
-#### 8. `add_library`
-#### 9. `add_link_options`
-#### 10. `add_subdirectory`
-#### 11. `add_test`
-#### 12. `aux_source_dirctory`
-#### 13. `build_command`
-#### 14. `create_test_sourcelist`
-#### 15. `define_property`
-#### 16. `enable_language`
-#### 17. `enable_testing`
-#### 18. `export`
-#### 19. `fltk_wrap_ui`
-#### 20. `get_source_file_property`
-#### 21. `get_target_property`
-#### 22. `get_test_property`
-#### 23. `include_directories`
+- `add_compile_definitions`
+- `add_compile_options`
+- `add_custom_command`
+- `add_custom_target`
+- `add_definitions`
+- `add_dependencies`
+- `add_executable`
+- [`add_library`](cmake-commands-add_library.md)
+- `add_link_options`
+- `add_subdirectory`
+- `add_test`
+- `aux_source_dirctory`
+- `build_command`
+- `create_test_sourcelist`
+- `define_property`
+- `enable_language`
+- `enable_testing`
+- `export`
+- `fltk_wrap_ui`
+- `get_source_file_property`
+- `get_target_property`
+- `get_test_property`
+- `include_directories`
 将指定的目录包含进构建过程中，语法如下
 ```
 include_directories([AFTER|BEFORE] [SYSTEM] dir1 [dir2 ...])
@@ -189,60 +189,11 @@ include_directories([AFTER|BEFORE] [SYSTEM] dir1 [dir2 ...])
 - `link_libraries`
 - `load_cache`
 
-#### 30. `project`
-
-用于设置项目的名称。
-
-##### （1）语法摘要：
-
-```
-project(<PROJECT-NAME> [<language-name>...])
-project(<PROJECT-NAME>
-        [VERSION <major>[.<minor>[.<patch>[.<tweak>]]]]
-        [DESCRIPTION <project-description-string>]
-        [HOMEPAGE_URL <url-string>]
-        [LANGUAGES <language-name>...])
-```
-设置项目的名称，并且会将其保存在 `PROJECT_NAME` 变量中，在 CMakeLists.txt 的顶层调用该命令时，设置的项目名也会保存在 `CMAKE_PROJECT_NAME` 变量中。 
-
-可以使用该命令同时设置以下变量
-- `PROJECT_SOURCE_DIR, <PROJECT-NAME>_SOURCE_DIR`
-- `PROJECT_BINARY_DIR, <PROJECT-NAME>_BINARY_DIR`
-
-##### （2）操作选项
-
-可以通过下面的操作参数来设置更多的变量，这些变量的默认值是空字符串。
-
-- **`VERSION <version>`**：可选操作，除非策略 `CMP0048` 设置为NEW，否则不能使用。`<version>` 由非负整数构成，即 `<major>[.<minor>[.<patch>[.<tweak>]]]` 形式的值，并且会设置以下变量
-    - `PROJECT_VERSION, <PROJECT-NAME>_VERSION`
-    - `PROJECT_VERSION_MAJOR, <PROJECT-NAME>_VERSION_MAJOR`
-    - `PROJECT_VERSION_MINOR, <PROJECT-NAME>_VERSION_MINOR`
-    - `PROJECT_VERSION_PATCH, <PROJECT-NAME>_VERSION_PATCH`
-    - `PROJECT_VERSION_TWEAK, <PROJECT-NAME>_VERSION_TWEAK.`
-在 CMakeList.txt 时顶层被调用时，版本号将会被保存到 `CMAKE_PROJECT_VERSION` 变量中
-
-- **`DESCRIPTION <project-description-string>`**：可选操作，设置 `PROJECT_DESCRIPTION, <PROJECT-NAME>_DESCRIPTION` 变量，建议使用相对短的字符串，通常不超过几个字符串。
-使用了该操作项时，设置的描述字符串将会被保存到 `CMAKE_PROJECT_DESCRIPTION` 变量中
-
-- **`HOMEPAGE_URL <url-string>`**：可选操作，设置 `PROJECT_HOMEPAGE_URL, <PROJECT-NAME>_HOMEPAGE_URL` 到 `<url-string>` 中，建议为项目的主页 URL。使用了该操作项的 `project()` 被调用时，此处设置的 url 将会被保存到  CMAKE_PROJECT_HOMEPAGE_URL 变量中。
-
-- **`LANGUAGES <language-name>...`**：可选操作，在第一个简短签名中可以不使用 `LANGUAGES` 关键字，这个操作先将会选择在构建过程中使用哪一种语言，支持`C`，`CXX`（即 C++），`CUDA`，`OBJC`（即 Objective-C），`OBJCXX`，`Fortran`，以及 `ASM`。如果没有指定任何语言默认会启用 `C` 和 `CXX`。将 `language` 指定为 `NONE`，或者使用了 `LANGUAGE` 关键字但是并不指定任何语言，则会跳过关于语言的选择。
-<br> 如果启用了 `ASM`，（原文：If enabling ASM, list it last so that CMake can check whether compilers for other languages like C work for assembly too.）
-
-通过VERSION，DESCRIPTION和HOMEPAGE_URL选项设置的变量旨在用作包元数据和文档中的默认值。
-
-
-##### （3）代码注入
-如果设置了`CMAKE_PROJECT_INCLUDE_BEFORE` 或者 `CMAKE_PROJECT_<PROJECT-NAME>_INCLUDE_BEFORE` 变量，那么它们所指向的文件将在 `project()` 的第一步包含进来。如果同时设置了两个，`CMAKE_PROJECT_INCLUDE_BEFORE` 会比 `CMAKE_PROJECT_<PROJECT-NAME>_INCLUDE_BEFORE` 先包含进来
-
-如果设置了 `CMAKE_PROJECT_INCLUDE` 或者 `CMAKE_PROJECT_<PROJECT-NAME>_INCLUDE` ,它们所指向的文件会在 `project()` 命令的最后一步被包含进来，如果同时设置了两者，那么 `CMAKE_PROJECT_INCLUDE` 会比 `CMAKE_PROJECT_<PROJECT-NAME>_INCLUDE` 先被包含进来
-
-
-##### （4）用法
-CMakeList.txt 文件的顶层必须包含对于 `project()` 的直接调用，仅仅通过 `include()` 命令加载一个是不够的，如果不存在这样的调用，CMake 会发出一个警告，并且会自动认为已经在顶部调用了 `project(project)` ，以启用默认语言（C 或者 CXX）
+- [`project`](cmake-command-project.md)
 
 - `remove_definitions`
-- `set_source_files_properties`
+
+- [`set_source_files_properties`](cmake-command-set_source_files_properties.md)
 - `set_target_properties`
 - `set_tests_properties`
 - `source_group`

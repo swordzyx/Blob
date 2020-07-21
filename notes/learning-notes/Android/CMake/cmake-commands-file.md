@@ -1,4 +1,6 @@
-文件操作命令
+[文件操作命令](https://cmake.org/cmake/help/latest/command/file.html)
+
+
 ## 一、概要
 - `Reading`
     - `file(READ <filename> <out-var> [...])`
@@ -27,7 +29,8 @@
 - `Locking`
     - `file(LOCK <path> [...])`
 
-## 二、Reading
+## 二、[Reading](https://cmake.org/cmake/help/latest/command/file.html#reading)
+
 > **file([READ](https://cmake.org/cmake/help/latest/command/file.html#read)\<filename\> \<out-var\> [...])**
 
 ### 1. 命令一
@@ -94,23 +97,82 @@ install(CODE [[
   ]])
 ```
 可以使用以下参数
-##### （1） `RESOLVED_DEPENDENCIES_VAR <deps_var>`
+#### （1） `RESOLVED_DEPENDENCIES_VAR <deps_var>`
 
 存储已解析依赖项列表的变量的名称。（原文：Name of the variable in which to store the list of resolved dependencies.）
 #### （2）`UNRESOLVED_DEPENDENCIES_VAR <unresolved_deps_var>`
 
 存储未解析依赖项列表中的变量名称，如果没有指定该变量，并且存在未解析的依赖项，会报出一个错误。
 
-#### （3）`CONFLICTING_DEPENDENCIES_PREFIX <conflicting_deps_prefix>`：存储冲突依赖项的名称前缀，如果在两个不同的目录中找到两个具有相同名称的文件，则依赖关系会发生冲突。 冲突的文件名列表存储在`<conflicting_deps_prefix>_FILENAMES`中。对于每个文件名，为该文件名找到的路径列表存储在`<conflicting_deps_prefix>_<filename>` 中。（原文：Variable prefix in which to store conflicting dependency information. Dependencies are conflicting if two files with the same name are found in two different directories. The list of filenames that conflict are stored in `<conflicting_deps_prefix>_FILENAMES`. For each filename, the list of paths that were found for that filename are stored in `<conflicting_deps_prefix>_<filename>.`）
-- `EXECUTABLES <executable_files>`：
-- `MODULES <module_files>`：
-- `DIRECTORIES <directories>`：
-- `BUNDLE_EXECUTABLE <bundle_executable_file>`：
-- `PRE_INCLUDE_REGEXES <regexes>`
-- `POST_INCLUDE_REGEXES <regexes>`
-- `POST_EXCLUDE_REGEXES <regexes>`：List of post-exclude regexes through which to filter the names of resolved dependencies.
-- ``
-- ``
-- ``
-- ``
-- ``
+#### （3）`CONFLICTING_DEPENDENCIES_PREFIX <conflicting_deps_prefix>`
+
+存储冲突依赖项的名称前缀，如果在两个不同的目录中找到两个具有相同名称的文件，则依赖关系会发生冲突。 冲突的文件名列表存储在`<conflicting_deps_prefix>_FILENAMES`中。对于每个文件名，为该文件名找到的路径列表存储在`<conflicting_deps_prefix>_<filename>` 中。（原文：Variable prefix in which to store conflicting dependency information. Dependencies are conflicting if two files with the same name are found in two different directories. The list of filenames that conflict are stored in `<conflicting_deps_prefix>_FILENAMES`. For each filename, the list of paths that were found for that filename are stored in `<conflicting_deps_prefix>_<filename>.`）
+
+
+#### (4) `EXECUTABLES <executable_files>`
+
+
+#### (5) `MODULES <module_files>`：
+
+#### (6) `DIRECTORIES <directories>`：
+
+#### (7) `BUNDLE_EXECUTABLE <bundle_executable_file>`：
+
+#### (8) `PRE_INCLUDE_REGEXES <regexes>`
+
+#### (9) `POST_INCLUDE_REGEXES <regexes>`
+
+#### (10)`POST_EXCLUDE_REGEXES <regexes>`：
+
+List of post-exclude regexes through which to filter the names of resolved dependencies.
+
+
+## 三、[Writing](https://cmake.org/cmake/help/latest/command/file.html#writing)
+
+## 四、[Filesystem](https://cmake.org/cmake/help/latest/command/file.html#filesystem)
+
+### 1. 命令一
+
+```
+file(GLOB <variable>
+     [LIST_DIRECTORIES true|false] [RELATIVE <path>] [CONFIGURE_DEPENDS]
+     [<globbing-expressions>...])
+
+file(GLOB_RECURSE <variable> [FOLLOW_SYMLINKS]
+     [LIST_DIRECTORIES true|false] [RELATIVE <path>] [CONFIGURE_DEPENDS]
+     [<globbing-expressions>...])
+```
+
+生成与 `<globbing-expressions>` 匹配的文件列表，并将其存储到 `<variable>` 中。通配表达式与正则表达式相似，但更为简单。 如果指定了RELATIVE标志，则结果将作为相对路径返回给定路径。 结果将按字典顺序排序。
+
+在 Window 和 macOS 上，表达式是不区分大小写的（在匹配之前，文件名和 globlob 表达式都转换为小写）。在其他平台上则区分大小写
+
+如果制定了 CONFIGURE_DEPENDS 标志，则 CMake 会向主构建系统的检查目标中添加一段逻辑，用于在构建时重新运行被标记的 GLOB 命令。
+
+默认情况下 GLOB 会列出目录，将 LIST_DIRECTORIES 设为 false ，则会省略目录输出。
+
+> 不建议使用 GLOB 命令从源码树中收集源代码文件列表。如果在源码树中增加或者删除文件，却没有在 CMakeLists.txt 中更改，则已生成的构建系统将不会通知 CMake 重新生成。CONFIGURE_DEPENDS 不是兼容所有的生成器的，如果未来增加了不兼容该属性的生成器，使用该生成器的项目将被卡住。即使CONFIGURE_DEPENDS能够可靠地工作，仍然需要对每个重建执行检查。
+
+通配符表达式示例：
+```
+*.cxx      - match all files with extension cxx
+*.vt?      - match all files with extension vta,...,vtz
+f[3-5].txt - match files f3.txt, f4.txt, f5.txt
+```
+
+GLOB_RECURSE 模式下会遍历匹配目录的所有子目录并匹配文件，如果设置了 FOLLOW_SYMLINKS 属性或者 CMP0009 未设置未 NEW 时，CMake 将遍历作为符号链接的子目录
+
+默认情况下，GLOB_RECURSE 会删除结果列表中的目录，可以将 LIST_DIRECTORIES 设为 true 以将目录添加到结果列表中。如果设置了 FOLLOW_SYMLINKS 属性或者 CMP0009 未设置未 NEW 时，作为符号链接的目录也会添加到结果列表中。
+
+包含子目录的通配符表达式示例：
+```
+/dir/*.py  - match all python files in /dir and subdirectories
+```
+
+### 2. 命令二
+```
+file(RENAME <oldname> <newname>)
+```
+
+
+
