@@ -513,6 +513,8 @@ retrofitService.getRepos() {
   这里主要就是将我们所定义的网络请求操作方法信息（包括请求类型，请求参数等）封装到 ExecutorCallbackCall 中，并返回，用于稍后的请求发送。
   */
   SuspendForBody.invoke {
+
+    //HttpServiceMethod
     @Override
     final @Nullable ReturnT invoke(Object[] args) {
       //创建 OkHttpCall 实例对象，这里可以看出 Retrofit 是基于 OkHttp 的。
@@ -521,7 +523,7 @@ retrofitService.getRepos() {
     }
 
 
-
+    //SuspendForBody
     @Override
     protected Object adapt(Call<ResponseT> call, Object[] args) {
 
