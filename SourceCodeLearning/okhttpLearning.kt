@@ -214,4 +214,608 @@ getResponseWithInterceptorChain() {
       }
     }
   }
+
+  //RealInterceptorChain.kt
+  override fun proceed(request: Request): Response {
+    check(index < interceptors.size)
+
+    calls++
+
+    if (exchange != null) {
+      check(exchange.finder.sameHostAndPort(request.url)) {
+        "network interceptor ${interceptors[index - 1]} must retain the same host and port"
+      }
+      check(calls == 1) {
+        "network interceptor ${interceptors[index - 1]} must call proceed() exactly once"
+      }
+    }
+
+    // 所有的拦截器以链式结构存储，这里获取到下一个拦截器，index 的初始值是 0.
+    val next = copy(index = index + 1, request = request)
+    val interceptor = interceptors[index]
+
+    @Suppress("USELESS_ELVIS")
+    //调用拦截器的 intercept 方法。每一个拦截器中都有对应的 intercept 方法。
+    val response = interceptor.intercept(next) ?: throw NullPointerException(
+        "interceptor $interceptor returned null")
+
+    if (exchange != null) {
+      check(index + 1 >= interceptors.size || next.calls == 1) {
+        "network interceptor $interceptor must call proceed() exactly once"
+      }
+    }
+
+    check(response.body != null) { "interceptor $interceptor returned a response with no body" }
+
+    return response
+  }
+
+
+  //RetryAndFollowUpInterceptor
+  //这里主要负责 Request 被重定向，或者请求超时等情况的请求跟随和请求重试
+  RetryAndFollowUpInterceptor {
+
+    //RetryAndFollowUpInterceptor
+    @Throws(IOException::class)
+    override fun intercept(chain: Interceptor.Chain): Response {
+      val realChain = chain as RealInterceptorChain
+      var request = chain.request
+      val call = realChain.call
+      var followUpCount = 0
+      var priorResponse: Response? = null
+      var newExchangeFinder = true
+      var recoveredFailures = listOf<IOException>()
+      while (true) {
+        call.enterNetworkInterceptorExchange(request, newExchangeFinder)
+
+        var response: Response
+        var closeActiveExchange = true
+        try {
+          if (call.isCanceled()) {
+            throw IOException("Canceled")
+          }
+
+          try {
+            //在此处将 Request 往下一个 Inerceptor 传递，也就是 BridgeInterceptor 所以这个拦截器主要做的是后置工作。
+            response = realChain.proceed(request)
+            newExchangeFinder = true
+          } catch (e: RouteException) {
+            // The attempt to connect via a route failed. The request will not have been sent.
+            if (!recover(e.lastConnectException, call, request, requestSendStarted = false)) {
+              throw e.firstConnectException.withSuppressed(recoveredFailures)
+            } else {
+              recoveredFailures += e.firstConnectException
+            }
+            newExchangeFinder = false
+            continue
+          } catch (e: IOException) {
+            // An attempt to communicate with a server failed. The request may have been sent.
+            if (!recover(e, call, request, requestSendStarted = e !is ConnectionShutdownException)) {
+              throw e.withSuppressed(recoveredFailures)
+            } else {
+              recoveredFailures += e
+            }
+            newExchangeFinder = false
+            continue
+          }
+
+          // Attach the prior response if it exists. Such responses never have a body.
+          if (priorResponse != null) {
+            response = response.newBuilder()
+                .priorResponse(priorResponse.newBuilder()
+                    .body(null)
+                    .build（())
+                .build()
+          }
+
+          val exchange = call.interceptorScopedExchange
+          //这里里面根据响应码，判断是否需要跟随请求，例如重定向请求，请求超时时的重试等等
+          val followUp = followUpRequest(response, exchange)
+
+          if (followUp == null) {
+            if (exchange != null && exchange.isDuplex) {
+              call.timeoutEarlyExit()
+            }
+            closeActiveExchange = false
+            return response
+          }
+
+          val followUpBody = followUp.body
+          if (followUpBody != null && followUpBody.isOneShot()) {
+            closeActiveExchange = false
+            return response
+          }
+
+          response.body?.closeQuietly()
+
+          if (++followUpCount > MAX_FOLLOW_UPS) {
+            throw ProtocolException("Too many follow-up requests: $followUpCount")
+          }
+
+          //这是一个死循环，因此这里将 followUp 赋值给 request 之后，会重新进行 request 的传递。
+          request = followUp
+          priorResponse = response
+        } finally {
+          call.exitNetworkInterceptorExchange(closeActiveExchange)
+        }
+      }
+    }
+
+    @Throws(IOException::class)
+    private fun followUpRequest(userResponse: Response, exchange: Exchange?): Request? {
+      val route = exchange?.connection?.route()
+      val responseCode = userResponse.code
+
+      val method = userResponse.request.method
+      when (responseCode) {
+        HTTP_PROXY_AUTH -> {
+          val selectedProxy = route!!.proxy
+          if (selectedProxy.type() != Proxy.Type.HTTP) {
+            throw ProtocolException("Received HTTP_PROXY_AUTH (407) code while not using proxy")
+          }
+          return client.proxyAuthenticator.authenticate(route, userResponse)
+        }
+
+        //需要进行授权认证
+        HTTP_UNAUTHORIZED -> return client.authenticator.authenticate(route, userResponse)
+
+        //重定向
+        HTTP_PERM_REDIRECT, HTTP_TEMP_REDIRECT, HTTP_MULT_CHOICE, HTTP_MOVED_PERM, HTTP_MOVED_TEMP, HTTP_SEE_OTHER -> {
+          return buildRedirectRequest(userResponse, method)
+        }
+
+        //客户端请求超时
+        HTTP_CLIENT_TIMEOUT -> {
+          // 408's are rare in practice, but some servers like HAProxy use this response code. The
+          // spec says that we may repeat the request without modifications. Modern browsers also
+          // repeat the request (even non-idempotent ones.)
+          if (!client.retryOnConnectionFailure) {
+            // The application layer has directed us not to retry the request.
+            return null
+          }
+
+          val requestBody = userResponse.request.body
+          if (requestBody != null && requestBody.isOneShot()) {
+            return null
+          }
+          val priorResponse = userResponse.priorResponse
+          if (priorResponse != null && priorResponse.code == HTTP_CLIENT_TIMEOUT) {
+            // We attempted to retry and got another timeout. Give up.
+            return null
+          }
+
+          if (retryAfter(userResponse, 0) > 0) {
+            return null
+          }
+
+          return userResponse.request
+        }
+
+        //服务器超时
+        HTTP_UNAVAILABLE -> {
+          val priorResponse = userResponse.priorResponse
+          if (priorResponse != null && priorResponse.code == HTTP_UNAVAILABLE) {
+            // We attempted to retry and got another timeout. Give up.
+            return null
+          }
+
+          if (retryAfter(userResponse, Integer.MAX_VALUE) == 0) {
+            // specifically received an instruction to retry without delay
+            return userResponse.request
+          }
+
+          return null
+        }
+
+        //HTTP 版本不一样，无法直接发送请求？猜的
+        HTTP_MISDIRECTED_REQUEST -> {
+          // OkHttp can coalesce HTTP/2 connections even if the domain names are different. See
+          // RealConnection.isEligible(). If we attempted this and the server returned HTTP 421, then
+          // we can retry on a different connection.
+          val requestBody = userResponse.request.body
+          if (requestBody != null && requestBody.isOneShot()) {
+            return null
+          }
+
+          if (exchange == null || !exchange.isCoalescedConnection) {
+            return null
+          }
+
+          exchange.connection.noCoalescedConnections()
+          return userResponse.request
+        }
+
+        else -> return null
+      }
+    }
+  }
+
+
+
+  //这里对请求的 Header 做一些额外的处理，设置压缩格式，传输的格式，传输的内容类型，Cookie 和用户代理等。
+  //BridgeInterceptor
+  BridgeInterceptor {
+    @Throws(IOException::class)
+    override fun intercept(chain: Interceptor.Chain): Response {
+      //获取要发送的请求
+      val userRequest = chain.request()
+      val requestBuilder = userRequest.newBuilder()
+
+      val body = userRequest.body
+      if (body != null) {
+        //获取请求体的内容类型
+        val contentType = body.contentType()
+        if (contentType != null) {
+          requestBuilder.header("Content-Type", contentType.toString())
+        }
+        //长度
+        val contentLength = body.contentLength()
+        //添加 Header
+        if (contentLength != -1L) {
+          requestBuilder.header("Content-Length", contentLength.toString())
+          requestBuilder.removeHeader("Transfer-Encoding")
+        } else {
+          requestBuilder.header("Transfer-Encoding", "chunked")
+          requestBuilder.removeHeader("Content-Length")
+        }
+      }
+
+      if (userRequest.header("Host") == null) {
+        requestBuilder.header("Host", userRequest.url.toHostHeader())
+      }
+
+      if (userRequest.header("Connection") == null) {
+        requestBuilder.header("Connection", "Keep-Alive")
+      }
+
+      // 默认情况下会添加一个压缩编码格式，表示接收压缩的响应内容，OkHttp 会自动进行解压缩。
+      var transparentGzip = false
+      if (userRequest.header("Accept-Encoding") == null && userRequest.header("Range") == null) {
+        transparentGzip = true
+        requestBuilder.header("Accept-Encoding", "gzip")
+      }
+
+      //如果保存了该请求对应的 Cookie
+      val cookies = cookieJar.loadForRequest(userRequest.url)
+      if (cookies.isNotEmpty()) {
+        requestBuilder.header("Cookie", cookieHeader(cookies))
+      }
+
+      if (userRequest.header("User-Agent") == null) {
+        requestBuilder.header("User-Agent", userAgent)
+      }
+
+      //将 Request 递交到下一个 Interceptor，
+      val networkResponse = chain.proceed(requestBuilder.build())
+
+      //保存新的 cookie 
+      cookieJar.receiveHeaders(userRequest.url, networkResponse.headers)
+
+      val responseBuilder = networkResponse.newBuilder()
+          .request(userRequest)
+
+      //如果在 Request 中设置了 “Accept-Encoding” 为 “gzip”，这里对响应的正文进行解压缩，然后将解压缩后的内容重新打包成一个 Response 并返回。
+      if (transparentGzip &&
+          "gzip".equals(networkResponse.header("Content-Encoding"), ignoreCase = true) &&
+          networkResponse.promisesBody()) {
+        val responseBody = networkResponse.body
+        if (responseBody != null) {
+          val gzipSource = GzipSource(responseBody.source())
+          val strippedHeaders = networkResponse.headers.newBuilder()
+              .removeAll("Content-Encoding")
+              .removeAll("Content-Length")
+              .build()
+          responseBuilder.headers(strippedHeaders)
+          val contentType = networkResponse.header("Content-Type")
+          responseBuilder.body(RealResponseBody(contentType, -1L, gzipSource.buffer()))
+        }
+      }
+
+      return responseBuilder.build()
+    }
+  }
+    
+
+  //CacheInterceptor
+  //执行缓存相关的处理，它在 NetworkInterceptor 之前，可以确保如果有缓存可用，那么在发生实质的网络请求之前能够将缓存作为 Resposne 返回。
+  CacheInterceptor {
+    @Throws(IOException::class)
+    override fun intercept(chain: Interceptor.Chain): Response {
+      //获取 Call
+      val call = chain.call()
+      val cacheCandidate = cache?.get(chain.request())
+
+      val now = System.currentTimeMillis()
+
+      //获取该请求在本地是否有缓存，如果有提取缓存，并计算该缓存是否可用。
+      //这里会根据设置的缓存策略来判断是使用缓存，还是向网络发送请求，如果二者皆不可用，networkRequest 和 cacheResposne 均为 null
+      val strategy = CacheStrategy.Factory(now, chain.request(), cacheCandidate).compute()
+      val networkRequest = strategy.networkRequest
+      val cacheResponse = strategy.cacheResponse
+
+      cache?.trackResponse(strategy)
+      val listener = (call as? RealCall)?.eventListener ?: EventListener.NONE
+
+      if (cacheCandidate != null && cacheResponse == null) {
+        // The cache candidate wasn't applicable. Close it.
+        cacheCandidate.body?.closeQuietly()
+      }
+
+      // If we're forbidden from using the network and the cache is insufficient, fail.
+      if (networkRequest == null && cacheResponse == null) {
+        return Response.Builder()
+            .request(chain.request())
+            .protocol(Protocol.HTTP_1_1)
+            .code(HTTP_GATEWAY_TIMEOUT)
+            .message("Unsatisfiable Request (only-if-cached)")
+            .body(EMPTY_RESPONSE)
+            .sentRequestAtMillis(-1L)
+            .receivedResponseAtMillis(System.currentTimeMillis())
+            .build().also {
+              listener.satisfactionFailure(call, it)
+            }
+      }
+
+      // 如果缓存可用，将缓存作为 Response 返回，不需要进行网络请求。
+      if (networkRequest == null) {
+        return cacheResponse!!.newBuilder()
+            .cacheResponse(stripBody(cacheResponse))
+            .build().also {
+              listener.cacheHit(call, it)
+            }
+      }
+
+      if (cacheResponse != null) {
+        listener.cacheConditionalHit(call, cacheResponse)
+      } else if (cache != null) {
+        listener.cacheMiss(call)
+      }
+
+      var networkResponse: Response? = null
+      try {
+        //将请求递交下一个拦截器，并等待响应
+        networkResponse = chain.proceed(networkRequest)
+      } finally {
+        // If we're crashing on I/O or otherwise, don't leak the cache body.
+        if (networkResponse == null && cacheCandidate != null) {
+          cacheCandidate.body?.closeQuietly()
+        }
+      }
+
+      //如果 WebServer 返回它的内容与本地缓存相比，内容并未更改，那么直接返回缓存的 Response，然后更新本地缓存
+      if (cacheResponse != null) {
+        if (networkResponse?.code == HTTP_NOT_MODIFIED) {
+          val response = cacheResponse.newBuilder()
+              .headers(combine(cacheResponse.headers, networkResponse.headers))
+              .sentRequestAtMillis(networkResponse.sentRequestAtMillis)
+              .receivedResponseAtMillis(networkResponse.receivedResponseAtMillis)
+              .cacheResponse(stripBody(cacheResponse))
+              .networkResponse(stripBody(networkResponse))
+              .build()
+
+          networkResponse.body!!.close()
+
+          // Update the cache after combining headers but before stripping the
+          // Content-Encoding header (as performed by initContentStream()).
+          cache!!.trackConditionalCacheHit()
+          //更新缓存
+          cache.update(cacheResponse, response)
+          return response.also {
+            listener.cacheHit(call, it)
+          }
+        } else {
+          cacheResponse.body?.closeQuietly()
+        }
+      }
+
+      val response = networkResponse!!.newBuilder()
+          .cacheResponse(stripBody(cacheResponse))
+          .networkResponse(stripBody(networkResponse))
+          .build()
+
+      if (cache != null) {
+        if (response.promisesBody() && CacheStrategy.isCacheable(response, networkRequest)) {
+          // Offer this request to the cache.
+          val cacheRequest = cache.put(response)
+          return cacheWritingResponse(cacheRequest, response).also {
+            if (cacheResponse != null) {
+              // This will log a conditional cache miss only.
+              listener.cacheMiss(call)
+            }
+          }
+        }
+
+        if (HttpMethod.invalidatesCache(networkRequest.method)) {
+          try {
+            cache.remove(networkRequest)
+          } catch (_: IOException) {
+            // The cache cannot be written.
+          }
+        }
+      }
+
+      return response
+    }
+  }
+  
+
+
+  //ConnectInterceptor
+  //这里的初始化连接实质是初始化了一个 Exchange 对象。
+  ConnectInterceptor {
+
+    //ConnectionInterceptor.kt
+    @Throws(IOException::class)
+    override fun intercept(chain: Interceptor.Chain): Response {
+      val realChain = chain as RealInterceptorChain
+      val exchange = realChain.call.initExchange(chain)
+      val connectedChain = realChain.copy(exchange = exchange)
+      //将请求递交给下一个 Interceptor
+      return connectedChain.proceed(realChain.request)
+    }
+
+
+    //RealCall.kt
+    internal fun initExchange(chain: RealInterceptorChain): Exchange {
+      synchronized(this) {
+        check(expectMoreExchanges) { "released" }
+        check(!responseBodyOpen)
+        check(!requestBodyOpen)
+      }
+
+      val exchangeFinder = this.exchangeFinder!!
+      //HTTP 编解码器
+      val codec = exchangeFinder.find(client, chain)
+      //初始化连接，Exchange 用于发送单个 HTTP 请求和一个响应对。
+      val result = Exchange(this, eventListener, exchangeFinder, codec)
+      this.interceptorScopedExchange = result
+      this.exchange = result
+      synchronized(this) {
+        this.requestBodyOpen = true
+        this.responseBodyOpen = true
+      }
+
+      if (canceled) throw IOException("Canceled")
+      return result
+    }
+
+  }
+
+
+  //CallServerInterceptor
+  //这里主要就是向 WebServer 发送请求和获取响应了。这是最后一个 Interceptor，在这里接收到响应之后就是一层一层往前回传
+  CallServerInterceptor {
+
+    @Throws(IOException::class)
+    override fun intercept(chain: Interceptor.Chain): Response {
+      val realChain = chain as RealInterceptorChain
+      val exchange = realChain.exchange!!
+      val request = realChain.request
+      val requestBody = request.body
+      val sentRequestMillis = System.currentTimeMillis()
+
+      var invokeStartEvent = true
+      var responseBuilder: Response.Builder? = null
+      var sendRequestException: IOException? = null
+      //发送请求，即向 Exchange 中写入 Request Headers 和 Request Body。
+      try {
+        //exchange 就是上一个请求创建的用来发送请求和接收响应的 Exchange 实例
+        //写入 Request Headers
+        exchange.writeRequestHeaders(request)
+
+        //发送 Request Body
+        if (HttpMethod.permitsRequestBody(request.method) && requestBody != null) {
+          //判断是否发送要给临时消息，并等待服务器返回 100 响应码，“100” 表示可以继续发送
+          if ("100-continue".equals(request.header("Expect"), ignoreCase = true)) {
+            exchange.flushRequest()
+            responseBuilder = exchange.readResponseHeaders(expectContinue = true)
+            exchange.responseHeadersStart()
+            invokeStartEvent = false
+          }
+          if (responseBuilder == null) {
+            if (requestBody.isDuplex()) {
+              // Prepare a duplex body so that the application can send a request body later.
+              exchange.flushRequest()
+              val bufferedRequestBody = exchange.createRequestBody(request, true).buffer()
+              requestBody.writeTo(bufferedRequestBody)
+            } else {
+              // Write the request body if the "Expect: 100-continue" expectation was met.
+              val bufferedRequestBody = exchange.createRequestBody(request, false).buffer()
+              requestBody.writeTo(bufferedRequestBody)
+              bufferedRequestBody.close()
+            }
+          } else {
+            exchange.noRequestBody()
+            if (!exchange.connection.isMultiplexed) {
+              // If the "Expect: 100-continue" expectation wasn't met, prevent the HTTP/1 connection
+              // from being reused. Otherwise we're still obligated to transmit the request body to
+              // leave the connection in a consistent state.
+              exchange.noNewExchangesOnConnection()
+            }
+          }
+        } else {
+          exchange.noRequestBody()
+        }
+
+        if (requestBody == null || !requestBody.isDuplex()) {
+          exchange.finishRequest()
+        }
+      } catch (e: IOException) {
+        if (e is ConnectionShutdownException) {
+          throw e // No request was sent so there's no response to read.
+        }
+        if (!exchange.hasFailure) {
+          throw e // Don't attempt to read the response; we failed to send the request.
+        }
+        sendRequestException = e
+      }
+
+      //获取 Response，并对 Response 做一些检查，然后将 Resposne 返回给上一个 Interpector。
+      try {
+        if (responseBuilder == null) {
+          //从 Exchange 中读取响应
+          responseBuilder = exchange.readResponseHeaders(expectContinue = false)!!
+          if (invokeStartEvent) {
+            exchange.responseHeadersStart()
+            invokeStartEvent = false
+          }
+        }
+
+        var response = responseBuilder
+            .request(request)
+            .handshake(exchange.connection.handshake())
+            .sentRequestAtMillis(sentRequestMillis)
+            .receivedResponseAtMillis(System.currentTimeMillis())
+            .build()
+        //获取响应码，响应码为 100
+        var code = response.code
+        if (code == 100) {
+          // Server sent a 100-continue even though we did not request one. Try again to read the
+          // actual response status.
+          responseBuilder = exchange.readResponseHeaders(expectContinue = false)!!
+          if (invokeStartEvent) {
+            exchange.responseHeadersStart()
+          }
+          response = responseBuilder
+              .request(request)
+              .handshake(exchange.connection.handshake())
+              .sentRequestAtMillis(sentRequestMillis)
+              .receivedResponseAtMillis(System.currentTimeMillis())
+              .build()
+          code = response.code
+        }
+
+        exchange.responseHeadersEnd(response)
+
+        //响应码为 101
+        response = if (forWebSocket && code == 101) {
+          // Connection is upgrading, but we need to ensure interceptors see a non-null response body.
+          response.newBuilder()
+              .body(EMPTY_RESPONSE)
+              .build()
+        } else {
+          response.newBuilder()
+              .body(exchange.openResponseBody(response))
+              .build()
+        }
+        if ("close".equals(response.request.header("Connection"), ignoreCase = true) ||
+            "close".equals(response.header("Connection"), ignoreCase = true)) {
+          exchange.noNewExchangesOnConnection()
+        }
+        if ((code == 204 || code == 205) && response.body?.contentLength() ?: -1L > 0L) {
+          throw ProtocolException(
+              "HTTP $code had non-zero Content-Length: ${response.body?.contentLength()}")
+        }
+        //返回 Resposne 。
+        return response
+      } catch (e: IOException) {
+        if (sendRequestException != null) {
+          sendRequestException.addSuppressed(e)
+          throw sendRequestException
+        }
+        throw e
+      }
+    }
+
+  }
 }
