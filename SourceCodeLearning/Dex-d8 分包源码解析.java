@@ -233,9 +233,7 @@ com.android.tools.r8.dex.ApplicationReader {
 							} 
 							do {
 								newPrefix = VirtualFile.extractPrefixToken(++prefixLength, originalName, false);
-							} while (currentPrefix != null && (currentPrefix
-								.startsWith(newPrefix) || 
-								conflictsWithPreviousPrefix(newPrefix, originalName)));
+							} while (currentPrefix != null && (currentPrefix.startsWith(newPrefix) || conflictsWithPreviousPrefix(newPrefix, originalName)));
 							if (!newPrefix.equals(""))
 								currentPrefix = VirtualFile.extractPrefixToken(prefixLength, originalName, true); 
 							transactionStartIndex = classIndex;
@@ -249,7 +247,8 @@ com.android.tools.r8.dex.ApplicationReader {
 							nonPackageClasses.add(clazz);
 							classIndex++;
 						} 
-						//判断方法索引数是否超过 65535
+						//判断方法索引数是否超过 65535，
+						//isFilledEnough 调用了 isFull(int numberOfMethods, int numberOfFields, int maxinum)，maxinum 为固定值
 						if (current.isFilledEnough(this.fillStrategy) || current.isFull()) {
 							current.abortTransaction();
 							if (classIndex - transactionStartIndex > (classIndex - fileStartIndex) / 5 && prefixLength < 7) {

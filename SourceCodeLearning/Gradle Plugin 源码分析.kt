@@ -912,6 +912,7 @@ createTasks {
 }
 
 
+//调用 D8.run(builder.build(), MoreExecutors.newDirectExecutorService())，生成 Dex 文件
 Dex 编译过程 {
     createTasks > createTasksForVariantData > createTasksForVariantData {
         .....
@@ -1062,6 +1063,7 @@ Dex 编译过程 {
             }
         }
 
+        //这里注册的任务用于生成 mainDexList.txt 文件
         if (variantScope.getNeedsMainDexList()) {
             taskFactory.register(new D8MainDexListTask.CreationAction(variantScope, false));
         }
@@ -1079,6 +1081,478 @@ Dex 编译过程 {
         // TODO: create JavaResSplitterTransform and call it here (http://b/77546738)
     }
 
+
+    D8MainDexListTask {
+        class CreationAction(scope: VariantScope, private val includeDynamicFeature: Boolean) : VariantTaskCreationAction<D8MainDexListTask>(scope) {
+
+            //初始化
+            init {
+                val inputScopes: Set<QualifiedContent.ScopeType> = setOf(
+                    PROJECT,
+                    SUB_PROJECTS,
+                    EXTERNAL_LIBRARIES
+                ) + (if (includeDynamicFeatures) setOf(FEATURES) else emptySet())
+
+                val libraryScopes = setOf(PROVIDED_ONLY, TESTED_CODE)
+
+                //检查多个 type/scope 中的 class 集合是否有重复。
+                inputClasses = scope.transformManager.getPipelineOutputAsFileCollection { contentTypes, scopes ->
+                    contentTypes.contains(QualifiedContent.DefaultContentType.CLASSES) && inputScopes.intersect(scopes).isNotEmpty()
+                }
+                libraryClasses = scope.transformManager.getPipelineOutputAsFileCollection { contentTypes, scopes ->
+                    contentTypes.contains(QualifiedContent.DefaultContentType.CLASSES) && libraryScopes.intersect(scopes).isNotEmpty()
+                }
+            }
+
+            //预配置，创建 mainDexList.txt 文件
+            override fun preConfigure(taskName: String) {
+                super.preConfigure(taskName)
+
+                val outputType =
+                    if (includeDynamicFeatures) {
+                        InternalArtifactType.MAIN_DEX_LIST_FOR_BUNDLE
+                    } else {
+                        InternalArtifactType.LEGACY_MULTIDEX_MAIN_DEX_LIST
+                    }
+                //创建 mainDexList.txt 文件
+                output = variantScope.artifacts.createArtifactFile(
+                    outputType, BuildArtifactsHolder.OperationType.INITIAL, taskName, "mainDexList.txt"
+                )
+            }
+
+            override fun configure(task: D8MainDexListTask) {
+                super.configure(task)
+                //配置输出
+                task.output = output
+
+                task.aaptGeneratedRules = variantScope.artifacts.getFinalArtifactFiles(
+                    InternalArtifactType.LEGACY_MULTIDEX_AAPT_DERIVED_PROGUARD_RULES).get()
+                task.userMultidexProguardRules = variantScope.variantConfiguration.multiDexKeepProguard
+                task.userMultidexKeepFile = variantScope.variantConfiguration.multiDexKeepFile
+
+                task.inputClasses = inputClasses
+                task.libraryClasses = libraryClasses
+
+                task.bootClasspath = variantScope.bootClasspath
+                task.errorFormat = SyncOptions.getErrorFormatMode(variantScope.globalScope.projectOptions)
+            }
+        }
+    }
+
+
+    //生成 Dex 文件
+    createDexTasks {
+        //生成 Dex 文件
+        private void createDexTasks(@NonNull VariantScope variantScope, @NonNull DexingType dexingType) {
+            TransformManager transformManager = variantScope.getTransformManager();
+
+            DefaultDexOptions dexOptions;
+            if (variantScope.getVariantData().getType().isTestComponent()) {
+                // Don't use custom dx flags when compiling the test FULL_APK. They can break the test FULL_APK,
+                // like --minimal-main-dex.
+                dexOptions = DefaultDexOptions.copyOf(extension.getDexOptions());
+                dexOptions.setAdditionalParameters(ImmutableList.of());
+            } else {
+                dexOptions = extension.getDexOptions();
+            }
+
+            Java8LangSupport java8SLangSupport = variantScope.getJava8LangSupportType();
+            boolean minified = variantScope.getCodeShrinker() != null;
+            //ENABLE_DEXING_DESUGARING_ARTIFACT_TRANSFORM 的值为 android.enableDexingArtifactTransform.desugaring
+            boolean supportsDesugaring = java8SLangSupport == Java8LangSupport.UNUSED || (java8SLangSupport == Java8LangSupport.D8 && projectOptions.get(BooleanOption.ENABLE_DEXING_DESUGARING_ARTIFACT_TRANSFORM));
+            //ENABLE_DEXING_ARTIFACT_TRANSFORM = "android.enableDexingArtifactTransform"
+            boolean enableDexingArtifactTransform = globalScope.getProjectOptions().get(BooleanOption.ENABLE_DEXING_ARTIFACT_TRANSFORM)
+                    && extension.getTransforms().isEmpty()
+                    && !minified
+                    && supportsDesugaring
+                    && !appliesCustomClassTransforms(variantScope, projectOptions);
+            FileCache userLevelCache = getUserDexCache(minified, dexOptions.getPreDexLibraries());
+            //DexArchiveBuilderTransform 里面封装了生成 Dex 文件的具体逻辑
+            DexArchiveBuilderTransform preDexTransform = new DexArchiveBuilderTransformBuilder()
+                    .setAndroidJarClasspath(globalScope.getFilteredBootClasspath())
+                    .setDexOptions(dexOptions)
+                    .setMessageReceiver(variantScope.getGlobalScope().getMessageReceiver())
+                    .setErrorFormatMode(SyncOptions.getErrorFormatMode(variantScope.getGlobalScope().getProjectOptions()))
+                    .setUserLevelCache(userLevelCache)
+                    .setMinSdkVersion(variantScope
+                            .getVariantConfiguration()
+                            .getMinSdkVersionWithTargetDeviceApi()
+                            .getFeatureLevel())
+                    .setDexer(variantScope.getDexer())
+                    .setUseGradleWorkers(projectOptions.get(BooleanOption.ENABLE_GRADLE_WORKERS))
+                    .setInBufferSize(projectOptions.get(IntegerOption.DEXING_READ_BUFFER_SIZE))
+                    .setOutBufferSize(projectOptions.get(IntegerOption.DEXING_WRITE_BUFFER_SIZE))
+                    .setIsDebuggable(variantScope
+                            .getVariantConfiguration()
+                            .getBuildType()
+                            .isDebuggable())
+                    .setJava8LangSupportType(java8SLangSupport)
+                    .setProjectVariant(getProjectVariantId(variantScope))
+                    .setNumberOfBuckets(projectOptions.get(IntegerOption.DEXING_NUMBER_OF_BUCKETS))
+                    .setIncludeFeaturesInScope(variantScope.consumesFeatureJars())
+                    .setEnableDexingArtifactTransform(enableDexingArtifactTransform)
+                    .createDexArchiveBuilderTransform();
+            transformManager.addTransform(taskFactory, variantScope, preDexTransform);
+
+            if (projectOptions.get(BooleanOption.ENABLE_DUPLICATE_CLASSES_CHECK)) {
+                taskFactory.register(new CheckDuplicateClassesTask.CreationAction(variantScope));
+            }
+
+            createDexMergingTasks(variantScope, dexingType, enableDexingArtifactTransform);
+        }
+
+        //从 class 集生成 Dex 文件
+        DexArchiveBuilderTransform {
+            @Override
+            public void transform(@NonNull TransformInvocation transformInvocation) throws TransformException, IOException, InterruptedException {
+
+                TransformOutputProvider outputProvider = transformInvocation.getOutputProvider();
+                Preconditions.checkNotNull(outputProvider, "Missing output provider.");
+                if (dexOptions.getAdditionalParameters().contains("--no-optimize")) {
+                    logger.warning(DefaultDexOptions.OPTIMIZE_WARNING);
+                }
+
+                logger.verbose("Task is incremental : %b ", transformInvocation.isIncremental());
+
+                if (!transformInvocation.isIncremental()) {
+                    outputProvider.deleteAll();
+                }
+
+                Set<File> additionalPaths;
+                DesugarIncrementalTransformHelper desugarIncrementalTransformHelper;
+                if (java8LangSupportType != VariantScope.Java8LangSupport.D8) {
+                    additionalPaths = ImmutableSet.of();
+                    desugarIncrementalTransformHelper = null;
+                } else {
+                    desugarIncrementalTransformHelper = new DesugarIncrementalTransformHelper(projectVariant, transformInvocation, executor);
+                    additionalPaths = desugarIncrementalTransformHelper
+                            .getAdditionalPaths()
+                            .stream()
+                            .map(Path::toFile)
+                            .collect(Collectors.toSet());
+                }
+
+                List<DexArchiveBuilderCacheHandler.CacheableItem> cacheableItems = new ArrayList<>();
+                boolean isIncremental = transformInvocation.isIncremental();
+                List<Path> classpath = getClasspath(transformInvocation)
+                        .stream()
+                        .map(Paths::get)
+                        .collect(Collectors.toList());
+                List<Path> bootclasspath = getBootClasspath(androidJarClasspath)
+                        .stream()
+                        .map(Paths::get)
+                        .collect(Collectors.toList());
+
+                ClasspathServiceKey bootclasspathServiceKey = null;
+                ClasspathServiceKey classpathServiceKey = null;
+                try (
+                    ClassFileProviderFactory bootClasspathProvider = new ClassFileProviderFactory(bootclasspath);
+                    ClassFileProviderFactory libraryClasspathProvider = new ClassFileProviderFactory(classpath)
+                ){
+                    bootclasspathServiceKey = new ClasspathServiceKey(bootClasspathProvider.getId());
+                    classpathServiceKey = new ClasspathServiceKey(libraryClasspathProvider.getId());
+                    INSTANCE.registerService(bootclasspathServiceKey, () -> new ClasspathService(bootClasspathProvider));
+                    INSTANCE.registerService(classpathServiceKey, () -> new ClasspathService(libraryClasspathProvider));
+
+                    for (TransformInput input : transformInvocation.getInputs()) {
+                        //从目录中读取 class
+                        for (DirectoryInput dirInput : input.getDirectoryInputs()) {
+                            logger.verbose("Dir input %s", dirInput.getFile().toString());
+                            convertToDexArchive(
+                                transformInvocation.getContext(),
+                                dirInput,
+                                outputProvider,
+                                isIncremental,
+                                bootclasspathServiceKey,
+                                classpathServiceKey,
+                                additionalPaths);
+                        }
+
+                        //从 jar 文件中读取 class
+                        for (JarInput jarInput : input.getJarInputs()) {
+                            logger.verbose("Jar input %s", jarInput.getFile().toString());
+
+                            D8DesugaringCacheInfo cacheInfo = getD8DesugaringCacheInfo(
+                                    desugarIncrementalTransformHelper,
+                                    bootclasspath,
+                                    classpath,
+                                    jarInput);
+
+                            List<File> dexArchives = processJarInput(
+                                    transformInvocation.getContext(),
+                                    isIncremental,
+                                    jarInput,
+                                    outputProvider,
+                                    bootclasspathServiceKey,
+                                    classpathServiceKey,
+                                    additionalPaths,
+                                    cacheInfo);
+
+                            if (cacheInfo != D8DesugaringCacheInfo.DONT_CACHE && !dexArchives.isEmpty()) {
+                                cacheableItems.add(new DexArchiveBuilderCacheHandler.CacheableItem(
+                                        jarInput,
+                                        dexArchives,
+                                        cacheInfo.orderedD8DesugaringDependencies));
+                            }
+                        }
+                    }
+
+                    if (useGradleWorkers) {
+                        transformInvocation.getContext().getWorkerExecutor().await();
+                    } else {
+                        executor.waitForTasksWithQuickFail(true);
+                    }
+
+                    if (transformInvocation.isIncremental()) {
+                        for (TransformInput transformInput : transformInvocation.getInputs()) {
+                            removeDeletedEntries(outputProvider, transformInput);
+                        }
+                    }
+
+                    if (!cacheableItems.isEmpty()) {
+                        cacheHandler.populateCache(cacheableItems);
+                    }
+
+                    logger.verbose("Done with all dex archive conversions");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new TransformException(e);
+                } catch (Exception e) {
+                    PluginCrashReporter.maybeReportException(e);
+                    logger.error(null, Throwables.getStackTraceAsString(e));
+                    throw new TransformException(e);
+                } finally {
+                    if (classpathServiceKey != null) {
+                        INSTANCE.removeService(classpathServiceKey);
+                    }
+                    if (bootclasspathServiceKey != null) {
+                        INSTANCE.removeService(bootclasspathServiceKey);
+                    }
+                }
+            }
+
+            //读取目录中的 class，生成 dex 文件
+            private List<File> convertToDexArchive(@NonNull Context context, @NonNull QualifiedContent input, @NonNull TransformOutputProvider outputProvider, boolean isIncremental, @NonNull ClasspathServiceKey bootClasspath, @NonNull ClasspathServiceKey classpath, @NonNull Set<File> additionalPaths) {
+
+                logger.verbose("Dexing %s", input.getFile().getAbsolutePath());
+
+                ImmutableList.Builder<File> dexArchives = ImmutableList.builder();
+                for (int bucketId = 0; bucketId < numberOfBuckets; bucketId++) {
+
+                    File preDexOutputFile;
+                    if (input instanceof DirectoryInput) {
+                        preDexOutputFile = getOutputForDir(outputProvider, (DirectoryInput) input);
+                        FileUtils.mkdirs(preDexOutputFile);
+                    } else {
+                        preDexOutputFile = getOutputForJar(outputProvider, (JarInput) input, bucketId);
+                    }
+
+                    dexArchives.add(preDexOutputFile);
+                    DexConversionParameters parameters = new DexConversionParameters(
+                            input,
+                            bootClasspath,
+                            classpath,
+                            preDexOutputFile,
+                            numberOfBuckets,
+                            bucketId,
+                            minSdkVersion,
+                            dexOptions.getAdditionalParameters(),
+                            inBufferSize,
+                            outBufferSize,
+                            dexer,
+                            isDebuggable,
+                            isIncremental,
+                            java8LangSupportType,
+                            additionalPaths,
+                            errorFormatMode);
+                    //useGradleWorkers 默认为 true
+                    if (useGradleWorkers) {
+                        //DexConversionWorkAction 具体实现位于 DexArchiveBuilder 中
+                        context.getWorkerExecutor().submit(
+                                DexConversionWorkAction.class,
+                                configuration -> {
+                                    configuration.setIsolationMode(IsolationMode.NONE);
+                                    configuration.setParams(parameters);
+                                });
+                    } else {
+                        executor.execute(() -> {
+                            ProcessOutputHandler outputHandler = new ParsingProcessOutputHandler(
+                                    new ToolOutputParser(new DexParser(), Message.Kind.ERROR, logger),
+                                    new ToolOutputParser(new DexParser(), logger),
+                                    messageReceiver);
+                            ProcessOutput output = null;
+                            try (Closeable ignored = output = outputHandler.createOutput()) {
+                                launchProcessing(
+                                        parameters,
+                                        output.getStandardOutput(),
+                                        output.getErrorOutput(),
+                                        messageReceiver);
+                            } finally {
+                                if (output != null) {
+                                    try {
+                                        outputHandler.handleOutput(output);
+                                    } catch (ProcessException e) {
+                                        // ignore this one
+                                    }
+                                }
+                            }
+                            return null;
+                        });
+                    }
+                }
+                return dexArchives.build();
+            }
+        }
+
+
+        //DexArchiveBuilderTransform.java
+        DexArchiveBuilderTransform.DexConversionWorkAction {
+            @Override
+            public void run() {
+                try {
+                    launchProcessing(
+                            dexConversionParameters,
+                            System.out,
+                            System.err,
+                            new MessageReceiverImpl(dexConversionParameters.errorFormatMode, Logging.getLogger(DexArchiveBuilderTransform.class)));
+                } catch (Exception e) {
+                    throw new BuildException(e.getMessage(), e);
+                }
+            }
+
+            private static void launchProcessing(@NonNull DexConversionParameters dexConversionParameters, @NonNull OutputStream outStream, @NonNull OutputStream errStream, @NonNull MessageReceiver receiver) throws IOException, URISyntaxException {
+                
+                DexArchiveBuilder dexArchiveBuilder = getDexArchiveBuilder(
+                        dexConversionParameters.minSdkVersion,
+                        dexConversionParameters.dexAdditionalParameters,
+                        dexConversionParameters.inBufferSize,
+                        dexConversionParameters.outBufferSize,
+                        dexConversionParameters.bootClasspath,
+                        dexConversionParameters.classpath,
+                        dexConversionParameters.dexer,
+                        dexConversionParameters.isDebuggable,
+                        VariantScope.Java8LangSupport.D8 == dexConversionParameters.java8LangSupportType,
+                        outStream,
+                        errStream,
+                        receiver);
+
+                Path inputPath = dexConversionParameters.input.getFile().toPath();
+                Predicate<String> bucketFilter = dexConversionParameters::belongsToThisBucket;
+
+                boolean hasIncrementalInfo = dexConversionParameters.isDirectoryBased() && dexConversionParameters.isIncremental;
+                Predicate<String> toProcess = hasIncrementalInfo
+                        ? path -> {
+                            File resolved = inputPath.resolve(path).toFile();
+                            if (dexConversionParameters.additionalPaths.contains(resolved)) {
+                                return true;
+                            }
+                            Map<File, Status> changedFiles = ((DirectoryInput) dexConversionParameters.input).getChangedFiles();
+
+                            Status status = changedFiles.get(resolved);
+                            return status == Status.ADDED || status == Status.CHANGED;
+                        } : path -> true;
+
+                bucketFilter = bucketFilter.and(toProcess);
+
+                logger.verbose("Dexing '" + inputPath + "' to '" + dexConversionParameters.output + "'");
+
+                try (
+                    ClassFileInput input = ClassFileInputs.fromPath(inputPath);
+                    Stream<ClassFileEntry> entries = input.entries(bucketFilter)
+                ) {
+                    dexArchiveBuilder.convert(
+                            entries,
+                            Paths.get(new URI(dexConversionParameters.output)),
+                            dexConversionParameters.isDirectoryBased());
+                } catch (DexArchiveBuilderException ex) {
+                    throw new DexArchiveBuilderException("Failed to process " + inputPath.toString(), ex);
+                }
+            }
+
+
+            //通过 D8 将 class 转换为 Dex 
+            @Override
+            public void convert(@NonNull Stream<ClassFileEntry> input, @NonNull Path output, boolean isIncremental) throws DexArchiveBuilderException {
+
+                D8DiagnosticsHandler d8DiagnosticsHandler = new InterceptingDiagnosticsHandler();
+                try {
+
+                    D8Command.Builder builder = D8Command.builder(d8DiagnosticsHandler);
+                    AtomicInteger entryCount = new AtomicInteger();
+                    input.forEach(entry -> {
+                        builder.addClassProgramData(readAllBytes(entry), D8DiagnosticsHandler.getOrigin(entry));
+                        entryCount.incrementAndGet();
+                    });
+                    if (entryCount.get() == 0) {
+                        // nothing to do here, just return
+                        return;
+                    }
+
+                    OutputMode outputMode = isIncremental ? OutputMode.DexFilePerClassFile : OutputMode.DexIndexed;
+                    builder.setMode(compilationMode)
+                            .setMinApiLevel(minSdkVersion)
+                            .setIntermediate(true)
+                            .setOutput(output, outputMode);
+
+                    if (desugaring) {
+                        builder.addLibraryResourceProvider(bootClasspath.getOrderedProvider());
+                        builder.addClasspathResourceProvider(classpath.getOrderedProvider());
+                    } else {
+                        builder.setDisableDesugaring(true);
+                    }
+
+                    D8.run(builder.build(), MoreExecutors.newDirectExecutorService());
+                } catch (Throwable e) {
+                    throw getExceptionToRethrow(e, d8DiagnosticsHandler);
+                }
+            }
+        }
+    }
+
+
+    private void maybeCreateDexSplitterTransform(@NonNull VariantScope variantScope) {
+        if (!variantScope.consumesFeatureJars()) {
+            return;
+        }
+
+        File dexSplitterOutput = FileUtils.join(
+                globalScope.getIntermediatesDir(),
+                "dex-splitter",
+                variantScope.getVariantConfiguration().getDirName());
+        FileCollection featureJars = variantScope.getArtifactFileCollection(METADATA_VALUES, PROJECT, METADATA_CLASSES);
+
+        BuildableArtifact baseJars = variantScope.getArtifacts().getFinalArtifactFiles(
+                InternalArtifactType.MODULE_AND_RUNTIME_DEPS_CLASSES);
+
+        BuildableArtifact mappingFileSrc = variantScope.getArtifacts().hasArtifact(InternalArtifactType.APK_MAPPING)
+                ? variantScope.getArtifacts().getFinalArtifactFiles(InternalArtifactType.APK_MAPPING) : null;
+
+        BuildableArtifact mainDexList = variantScope.getArtifacts().getFinalArtifactFilesIfPresent(
+                InternalArtifactType.MAIN_DEX_LIST_FOR_BUNDLE);
+
+        DexSplitterTransform transform = new DexSplitterTransform(dexSplitterOutput, featureJars, baseJars, mappingFileSrc, mainDexList);
+
+        Optional<TaskProvider<TransformTask>> transformTask = variantScope
+                .getTransformManager()
+                .addTransform(
+                        taskFactory,
+                        variantScope,
+                        transform,
+                        taskName -> variantScope.getArtifacts().appendArtifact(
+                                InternalArtifactType.FEATURE_DEX,
+                                ImmutableList.of(dexSplitterOutput),
+                                taskName),
+                        null,
+                        null);
+
+        if (transformTask.isPresent()) {
+            publishFeatureDex(variantScope);
+        } else {
+            globalScope
+                    .getErrorHandler()
+                    .reportError(Type.GENERIC,new EvalIssueException("Internal error, could not add the DexSplitterTransform"));
+        }
+    }
 
     //生成 build/intermediates/res_stripped/release/resources-release-stripped.ap_
     protected void maybeCreateResourcesShrinkerTransform(@NonNull VariantScope scope) {
@@ -1128,121 +1602,195 @@ Dex 编译过程 {
         // And for the bundle
         taskFactory.register(new ShrinkBundleResourcesTask.CreationAction(scope));
     }
+}
 
 
-    //生成 Dex 文件
-    createDexTasks {
-        //生成 Dex 文件
-        private void createDexTasks(@NonNull VariantScope variantScope, @NonNull DexingType dexingType) {
-            TransformManager transformManager = variantScope.getTransformManager();
+D8 {
+    public static void run(D8Command command, ExecutorService executor) throws CompilationFailedException {
+        AndroidApp app = command.getInputApp();
+        InternalOptions options = command.getInternalOptions();
+        //开启一个线程，执行传进去 run
+        ExceptionUtils.withD8CompilationHandler(command.getReporter(), () -> run(app, options, executor));
+    }
 
-            DefaultDexOptions dexOptions;
-            if (variantScope.getVariantData().getType().isTestComponent()) {
-                // Don't use custom dx flags when compiling the test FULL_APK. They can break the test FULL_APK,
-                // like --minimal-main-dex.
-                dexOptions = DefaultDexOptions.copyOf(extension.getDexOptions());
-                dexOptions.setAdditionalParameters(ImmutableList.of());
-            } else {
-                dexOptions = extension.getDexOptions();
-            }
-
-            Java8LangSupport java8SLangSupport = variantScope.getJava8LangSupportType();
-            boolean minified = variantScope.getCodeShrinker() != null;
-            boolean supportsDesugaring =
-                    java8SLangSupport == Java8LangSupport.UNUSED
-                            || (java8SLangSupport == Java8LangSupport.D8
-                                    && projectOptions.get(BooleanOption.ENABLE_DEXING_DESUGARING_ARTIFACT_TRANSFORM));
-            boolean enableDexingArtifactTransform =
-                    globalScope.getProjectOptions().get(BooleanOption.ENABLE_DEXING_ARTIFACT_TRANSFORM)
-                            && extension.getTransforms().isEmpty()
-                            && !minified
-                            && supportsDesugaring
-                            && !appliesCustomClassTransforms(variantScope, projectOptions);
-            FileCache userLevelCache = getUserDexCache(minified, dexOptions.getPreDexLibraries());
-            DexArchiveBuilderTransform preDexTransform = new DexArchiveBuilderTransformBuilder()
-                    .setAndroidJarClasspath(globalScope.getFilteredBootClasspath())
-                    .setDexOptions(dexOptions)
-                    .setMessageReceiver(variantScope.getGlobalScope().getMessageReceiver())
-                    .setErrorFormatMode(
-                            SyncOptions.getErrorFormatMode(
-                                    variantScope.getGlobalScope().getProjectOptions()))
-                    .setUserLevelCache(userLevelCache)
-                    .setMinSdkVersion(
-                            variantScope
-                                    .getVariantConfiguration()
-                                    .getMinSdkVersionWithTargetDeviceApi()
-                                    .getFeatureLevel())
-                    .setDexer(variantScope.getDexer())
-                    .setUseGradleWorkers(projectOptions.get(BooleanOption.ENABLE_GRADLE_WORKERS))
-                    .setInBufferSize(projectOptions.get(IntegerOption.DEXING_READ_BUFFER_SIZE))
-                    .setOutBufferSize(projectOptions.get(IntegerOption.DEXING_WRITE_BUFFER_SIZE))
-                    .setIsDebuggable(
-                            variantScope
-                                    .getVariantConfiguration()
-                                    .getBuildType()
-                                    .isDebuggable())
-                    .setJava8LangSupportType(java8SLangSupport)
-                    .setProjectVariant(getProjectVariantId(variantScope))
-                    .setNumberOfBuckets(projectOptions.get(IntegerOption.DEXING_NUMBER_OF_BUCKETS))
-                    .setIncludeFeaturesInScope(variantScope.consumesFeatureJars())
-                    .setEnableDexingArtifactTransform(enableDexingArtifactTransform)
-                    .createDexArchiveBuilderTransform();
-            transformManager.addTransform(taskFactory, variantScope, preDexTransform);
-
-            if (projectOptions.get(BooleanOption.ENABLE_DUPLICATE_CLASSES_CHECK)) {
-                taskFactory.register(new CheckDuplicateClassesTask.CreationAction(variantScope));
-            }
-
-            createDexMergingTasks(variantScope, dexingType, enableDexingArtifactTransform);
+    withD8CompilationHandler {
+        //ExceptionUtil.java
+        public static void withD8CompilationHandler(Reporter reporter, CompileAction action) throws CompilationFailedException {
+            withCompilationHandler(reporter, action, Compiler.D8);
         }
 
-
-        private void maybeCreateDexSplitterTransform(@NonNull VariantScope variantScope) {
-            if (!variantScope.consumesFeatureJars()) {
-                return;
-            }
-
-            File dexSplitterOutput = FileUtils.join(
-                    globalScope.getIntermediatesDir(),
-                    "dex-splitter",
-                    variantScope.getVariantConfiguration().getDirName());
-            FileCollection featureJars = variantScope.getArtifactFileCollection(METADATA_VALUES, PROJECT, METADATA_CLASSES);
-
-            BuildableArtifact baseJars = variantScope.getArtifacts().getFinalArtifactFiles(
-                    InternalArtifactType.MODULE_AND_RUNTIME_DEPS_CLASSES);
-
-            BuildableArtifact mappingFileSrc = variantScope.getArtifacts().hasArtifact(InternalArtifactType.APK_MAPPING)
-                    ? variantScope.getArtifacts().getFinalArtifactFiles(InternalArtifactType.APK_MAPPING) : null;
-
-            BuildableArtifact mainDexList = variantScope.getArtifacts().getFinalArtifactFilesIfPresent(
-                    InternalArtifactType.MAIN_DEX_LIST_FOR_BUNDLE);
-
-            DexSplitterTransform transform = new DexSplitterTransform(dexSplitterOutput, featureJars, baseJars, mappingFileSrc, mainDexList);
-
-            Optional<TaskProvider<TransformTask>> transformTask = variantScope
-                    .getTransformManager()
-                    .addTransform(
-                            taskFactory,
-                            variantScope,
-                            transform,
-                            taskName -> variantScope.getArtifacts().appendArtifact(
-                                    InternalArtifactType.FEATURE_DEX,
-                                    ImmutableList.of(dexSplitterOutput),
-                                    taskName),
-                            null,
-                            null);
-
-            if (transformTask.isPresent()) {
-                publishFeatureDex(variantScope);
-            } else {
-                globalScope
-                        .getErrorHandler()
-                        .reportError(Type.GENERIC,new EvalIssueException("Internal error, could not add the DexSplitterTransform"));
+        public static void withCompilationHandler(Reporter reporter, CompileAction action, Compiler compiler) throws CompilationFailedException {
+            try {
+                try {
+                    action.run();
+                } catch (IOException e) {
+                    throw reporter.fatalError(new IOExceptionDiagnostic(e));
+                } catch (CompilationException e) {
+                    throw reporter.fatalError(new StringDiagnostic((compiler == Compiler.D8) ? e.getMessageForD8() : e.getMessageForR8()), e);
+                } catch (CompilationError e) {
+                    throw reporter.fatalError(e);
+                } catch (ResourceException e) {
+                    throw reporter.fatalError((e.getCause() instanceof IOException) ? 
+                                new IOExceptionDiagnostic((IOException)e.getCause(), e.getOrigin()) : 
+                                new StringDiagnostic(e.getMessage(), e.getOrigin()));
+                } 
+                
+                reporter.failIfPendingErrors();
+            } catch (AbortException e) {
+                throw new CompilationFailedException(e);
             }
         }
     }
-    
 
+    //D8.java
+    private static void run(AndroidApp inputApp, InternalOptions options, ExecutorService executor) throws IOException, CompilationException {
+        try {
+            options.skipMinification = true;
+            options.inlineAccessors = false;
+            options.outline.enabled = false;
+            Timing timing = new Timing("DX timer");
+            DexApplication app = (new ApplicationReader(inputApp, options, timing)).read(executor);
+            AppInfo appInfo = new AppInfo(app);
+            app = optimize(app, appInfo, options, timing, executor);
+            if (options.hasMethodsFilter()) {
+                System.out.println("Finished compilation with method filter: ");
+                options.methodsFilter.forEach(m -> System.out.println("  - " + m));
+            } 
+            Marker marker = getMarker(options);
+            (new ApplicationWriter(app, options, marker, null, NamingLens.getIdentityLens(), null, null)).write(executor);
+            options.printWarnings();
+        } catch (ExecutionException e) {
+            R8.unwrapExecutionException(e);
+            throw new AssertionError(e);
+        } finally {
+              options.signalFinishedToProgramConsumer();
+        } 
+    }
 
+    ApplicationReader.read {
+        public final DexApplication read(StringResource proguardMap, ExecutorService executorService, ProgramClassConflictResolver resolver) throws IOException, ExecutionException {
+            this.timing.begin("DexApplication.read");
+            LazyLoadedDexApplication.Builder builder = DexApplication.builder(this.itemFactory, this.timing, resolver);
+            try {
+                List<Future<?>> futures = new ArrayList<>();
+                readProguardMap(proguardMap, (DexApplication.Builder<?>)builder, executorService, futures);
+                readMainDexList((DexApplication.Builder<?>)builder, executorService, futures);
+                ClassReader classReader = new ClassReader(executorService, futures);
+                classReader.readSources();
+                ThreadUtils.awaitFutures(futures);
+                classReader.initializeLazyClassCollection(builder);
+            } catch (ResourceException e) {
+                throw this.options.reporter.fatalError(new StringDiagnostic(e.getMessage(), e.getOrigin()));
+            } finally {
+                this.timing.end();
+            } 
+            return (DexApplication)builder.build();
+        }
 
+        ClassReader {
+            void readSources() throws IOException, ResourceException {
+                Collection<ProgramResource> resources = ApplicationReader.this.inputApp.computeAllProgramResources();
+                List<ProgramResource> dexResources = new ArrayList<>(resources.size());
+                List<ProgramResource> cfResources = new ArrayList<>(resources.size());
+                for (ProgramResource resource : resources) {
+                    if (resource.getKind() == ProgramResource.Kind.DEX) {
+                        dexResources.add(resource);
+                        continue;
+                    } 
+                    assert resource.getKind() == ProgramResource.Kind.CF;
+                    cfResources.add(resource);
+                } 
+                //读取目录下的 class 文件
+                readDexSources(dexResources, ClassKind.PROGRAM, this.programClasses);
+                //读取 jar 文件中的 class
+                readClassSources(cfResources, ClassKind.PROGRAM, this.programClasses);
+            }
+
+            private <T extends com.android.tools.r8.graph.DexClass> void readDexSources(List<ProgramResource> dexSources, ClassKind classKind, Queue<T> classes) throws IOException, ResourceException {
+
+                if (dexSources.size() > 0) {
+                    List<DexFileReader> fileReaders = new ArrayList<>(dexSources.size());
+                    int computedMinApiLevel = ApplicationReader.this.options.minApiLevel;
+                    for (ProgramResource input : dexSources) {
+                        DexFile file = new DexFile(input);
+                        computedMinApiLevel = ApplicationReader.this.verifyOrComputeMinApiLevel(computedMinApiLevel, file);
+                        fileReaders.add(new DexFileReader(file, classKind, ApplicationReader.this.itemFactory));
+                    } 
+                    ApplicationReader.this.options.minApiLevel = computedMinApiLevel;
+                    for (DexFileReader reader : fileReaders)
+                        DexFileReader.populateIndexTables(reader); 
+                    if (!ApplicationReader.this.options.skipReadingDexCode)
+                    for (DexFileReader reader : fileReaders) {
+                        this.futures.add(this.executorService.submit(() -> {
+                            reader.addCodeItemsTo();
+                            Objects.requireNonNull(classes);
+                            reader.addClassDefsTo(classKind.bridgeConsumer(classes::add));
+                            }));
+                    }  
+                } 
+            }
+        }
+    }
+
+    ApplicationWriter.write {
+        //ApplicationWriter.java
+        public void write(ExecutorService executorService) throws IOException, ExecutionException, DexOverflowException {
+            this.application.timing.begin("DexApplication.write");
+            try {
+                insertAttributeAnnotations();
+                this.application.dexItemFactory.sort(this.namingLens);
+                assert this.markerString == null || this.application.dexItemFactory.extractMarker() != null;
+                SortAnnotations sortAnnotations = new SortAnnotations();
+                this.application.classes().forEach(clazz -> clazz.addDependencies(sortAnnotations));
+                Map<VirtualFile, Future<ObjectToOffsetMapping>> offsetMappingFutures = new LinkedHashMap<>();
+                for (VirtualFile newFile : distribute()) {
+                    assert !newFile.isEmpty();
+                    if (!newFile.isEmpty())
+                        offsetMappingFutures.put(newFile, executorService.submit(() -> {
+                            ObjectToOffsetMapping mapping = newFile.computeMapping(this.application);
+                            rewriteCodeWithJumboStrings(mapping, newFile.classes(), this.application);
+                            return mapping;
+                        })); 
+                } 
+                ThreadUtils.awaitFutures(offsetMappingFutures.values());
+                List<Future<Boolean>> dexDataFutures = new ArrayList<>();
+                try {
+                    for (VirtualFile virtualFile : offsetMappingFutures.keySet()) {
+                        assert !virtualFile.isEmpty();
+                        ObjectToOffsetMapping mapping = ((Future<ObjectToOffsetMapping>)offsetMappingFutures.get(virtualFile)).get();
+                        dexDataFutures.add(executorService.submit(() -> {
+                            byte[] result = writeDexFile(mapping);
+                            if (virtualFile.getPrimaryClassDescriptor() != null) {
+                                this.options.getDexFilePerClassFileConsumer().accept(virtualFile.getPrimaryClassDescriptor(), result, virtualFile.getClassDescriptors(), (DiagnosticsHandler)this.options.reporter);
+                            } else {
+                                this.options.getDexIndexedConsumer().accept(virtualFile.getId(), result, virtualFile.getClassDescriptors(), (DiagnosticsHandler)this.options.reporter);
+                            } 
+                            return Boolean.valueOf(true);
+                        }));
+                    } 
+                } catch (InterruptedException e) {
+                    throw new RuntimeException("Interrupted while waiting for future.", e);
+                } 
+                offsetMappingFutures.clear();
+                ThreadUtils.awaitFutures(dexDataFutures);
+                this.options.reporter.failIfPendingErrors();
+                supplyAdditionalConsumers(this.application, this.namingLens, this.options, this.deadCode, this.proguardMapSupplier, this.proguardSeedsData);
+            } finally {
+              this.application.timing.end();
+            } 
+        }
+
+        private Iterable<VirtualFile> distribute() throws ExecutionException, IOException, DexOverflowException {
+            VirtualFile.Distributor distributor;
+            if (this.options.isGeneratingDexFilePerClassFile()) {
+                distributor = new VirtualFile.FilePerInputClassDistributor(this);
+            } else if (!this.options.canUseMultidex() && this.options.mainDexKeepRules.isEmpty() && this.application.mainDexList.isEmpty() && this.options.enableMainDexListCheck) {
+
+                distributor = new VirtualFile.MonoDexDistributor(this, this.options);
+            } else {
+                distributor = new VirtualFile.FillFilesDistributor(this, this.options);
+            } 
+            return distributor.run();
+        }
+    }
 }
