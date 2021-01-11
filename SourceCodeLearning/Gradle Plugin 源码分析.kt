@@ -1747,6 +1747,7 @@ D8 {
                     assert !newFile.isEmpty();
                     if (!newFile.isEmpty())
                         offsetMappingFutures.put(newFile, executorService.submit(() -> {
+                            //new 一个 ObjectToOffsetMapping 实例并返回
                             ObjectToOffsetMapping mapping = newFile.computeMapping(this.application);
                             rewriteCodeWithJumboStrings(mapping, newFile.classes(), this.application);
                             return mapping;
@@ -1780,17 +1781,324 @@ D8 {
             } 
         }
 
-        private Iterable<VirtualFile> distribute() throws ExecutionException, IOException, DexOverflowException {
-            VirtualFile.Distributor distributor;
-            if (this.options.isGeneratingDexFilePerClassFile()) {
-                distributor = new VirtualFile.FilePerInputClassDistributor(this);
-            } else if (!this.options.canUseMultidex() && this.options.mainDexKeepRules.isEmpty() && this.application.mainDexList.isEmpty() && this.options.enableMainDexListCheck) {
+        //返回 List<VirtualFile>，VirtualFile.java
+        distribute {
+            private Iterable<VirtualFile> distribute() throws ExecutionException, IOException, DexOverflowException {
+                VirtualFile.Distributor distributor;
+                if (this.options.isGeneratingDexFilePerClassFile()) {
+                    distributor = new VirtualFile.FilePerInputClassDistributor(this);
+                } else if (!this.options.canUseMultidex() && this.options.mainDexKeepRules.isEmpty() && this.application.mainDexList.isEmpty() && this.options.enableMainDexListCheck) {
 
-                distributor = new VirtualFile.MonoDexDistributor(this, this.options);
-            } else {
-                distributor = new VirtualFile.FillFilesDistributor(this, this.options);
-            } 
-            return distributor.run();
+                    distributor = new VirtualFile.MonoDexDistributor(this, this.options);
+                } else {
+                    //只生成一个 Dex 文件
+                    distributor = new VirtualFile.FillFilesDistributor(this, this.options);
+                } 
+                return distributor.run();
+            }
+
+            FilePerInputClassDistributor {
+                public Collection<VirtualFile> run() {
+                    HashMap<DexProgramClass, VirtualFile> files = new HashMap<>();
+                    Collection<DexProgramClass> synthetics = new ArrayList<>();
+                    for (DexProgramClass clazz : this.application.classes()) {
+                        if (clazz.getSynthesizedFrom().isEmpty()) {
+                            VirtualFile file = new VirtualFile(this.virtualFiles.size(), this.writer.namingLens, clazz);
+                            this.virtualFiles.add(file);
+                            file.addClass(clazz);
+                            files.put(clazz, file);
+                            file.commitTransaction();
+                            continue;
+                        } 
+                        synthetics.add(clazz);
+                    } 
+                    for (DexProgramClass synthetic : synthetics) {
+                        for (DexProgramClass inputType : synthetic.getSynthesizedFrom()) {
+                            VirtualFile file = files.get(inputType);
+                            file.addClass(synthetic);
+                            file.commitTransaction();
+                        } 
+                    } 
+                        
+                    return this.virtualFiles;
+                }
+            }
+
+            MonoDexDistributor {
+                public Collection<VirtualFile> run() throws ExecutionException, IOException, DexOverflowException {
+                    for (DexProgramClass programClass : this.classes)
+                        this.mainDexFile.addClass(programClass); 
+                    this.mainDexFile.commitTransaction();
+                    this.mainDexFile.throwIfFull(false);
+                    return this.virtualFiles;
+                }
+            }
+
+            FillFilesDistributor {
+                public Collection<VirtualFile> run() throws IOException, DexOverflowException {
+                    //向主 Dex 文件中写入 class
+                    fillForMainDexList(this.classes);
+                    if (this.classes.isEmpty())
+                        return this.virtualFiles; 
+                    List<VirtualFile> filesForDistribution = this.virtualFiles;
+                    int fileIndexOffset = 0;
+                    if (this.options.minimalMainDex && !this.mainDexFile.isEmpty()) {
+                        assert !((VirtualFile)this.virtualFiles.get(0)).isEmpty();
+                        assert this.virtualFiles.size() == 1;
+                        this.virtualFiles.add(new VirtualFile(1, this.writer.namingLens));
+                        filesForDistribution = this.virtualFiles.subList(1, this.virtualFiles.size());
+                        fileIndexOffset = 1;
+                    } 
+                    this.classes = sortClassesByPackage(this.classes, this.originalNames);
+                    (new VirtualFile.PackageSplitPopulator(filesForDistribution, this.classes, this.originalNames, null, this.application.dexItemFactory, this.fillStrategy, fileIndexOffset, this.writer.namingLens)).call();
+                    return this.virtualFiles;
+                }
+
+
+                fillForMainDexList {
+                    protected void fillForMainDexList(Set<DexProgramClass> classes) throws DexOverflowException {
+                        if (!this.application.mainDexList.isEmpty()) {
+                            //获取主 Dex 文件
+                            VirtualFile mainDexFile = this.virtualFiles.get(0);
+                            //将 mainDexList 中定义的 class 写入到主 Dex 文件中
+                            for (UnmodifiableIterator<DexType> unmodifiableIterator = this.application.mainDexList.iterator(); unmodifiableIterator.hasNext(); ) {
+                                DexType type = unmodifiableIterator.next();
+                                DexClass clazz = this.application.definitionFor(type);
+                                if (clazz != null && clazz.isProgramClass()) {
+                                    DexProgramClass programClass = (DexProgramClass)clazz;
+                                    mainDexFile.addClass(programClass);
+                                    classes.remove(programClass);
+                                } else {
+                                    this.options.reporter.warning((Diagnostic)new StringDiagnostic("Application does not contain `" + type.toSourceString() + "` as referenced in main-dex-list."));
+                                }
+                                mainDexFile.commitTransaction();
+                            } 
+                            mainDexFile.throwIfFull(true);
+                        } 
+                    }
+
+                    void throwIfFull(boolean hasMainDexList) throws DexOverflowException {
+                        if (!isFull())
+                          return; 
+                        throw new DexOverflowException(hasMainDexList, this.transaction.getNumberOfMethods(), this.transaction.getNumberOfFields(), 65536L);
+                    }
+
+                    private boolean isFull() {
+                        return isFull(this.transaction.getNumberOfMethods(), this.transaction.getNumberOfFields(), 65536);
+                    }
+
+                    private static boolean isFull(int numberOfMethods, int numberOfFields, int maximum) {
+                        return (numberOfMethods > maximum || numberOfFields > maximum);
+                    }
+                }
+
+
+                //VirtualFile.java  分包
+                PackageSplitPopulator {
+                    PackageSplitPopulator(List<VirtualFile> files, Set<DexProgramClass> classes, Map<DexProgramClass, String> originalNames, Set<String> previousPrefixes, DexItemFactory dexItemFactory, VirtualFile.FillStrategy fillStrategy, int fileIndexOffset, NamingLens namingLens) {
+                        this.classes = new ArrayList<>(classes);
+                        this.originalNames = originalNames;
+                        this.previousPrefixes = previousPrefixes;
+                        this.dexItemFactory = dexItemFactory;
+                        this.fillStrategy = fillStrategy;
+                        this.cycler = new VirtualFile.VirtualFileCycler(files, namingLens, fileIndexOffset);
+                    }
+
+                    public Map<String, Integer> call() throws IOException {
+                        int prefixLength = 4;
+                        int transactionStartIndex = 0;
+                        int fileStartIndex = 0;
+                        String currentPrefix = null;
+                        Map<String, Integer> newPackageAssignments = new LinkedHashMap<>();
+                        VirtualFile current = this.cycler.next();
+                        List<DexProgramClass> nonPackageClasses = new ArrayList<>();
+                        int classIndex = 0;
+                        while (true) {
+                            if (classIndex < this.classes.size()) {
+                                DexProgramClass clazz = this.classes.get(classIndex);
+                                //获取 class 的原始类名
+                                String originalName = getOriginalName(clazz);
+                                //判断 originalName 是否包含指定前缀
+                                if (!coveredByPrefix(originalName, currentPrefix)) {
+                                    String newPrefix;
+                                    if (currentPrefix != null) {
+                                        current.commitTransaction();
+                                        this.cycler.restart();
+                                        assert !newPackageAssignments.containsKey(currentPrefix);
+                                        newPackageAssignments.put(currentPrefix, Integer.valueOf(current.id));
+                                        prefixLength = 3;
+                                    } 
+                                    do {
+                                        newPrefix = VirtualFile.extractPrefixToken(++prefixLength, originalName, false);
+                                    } while (currentPrefix != null && (currentPrefix.startsWith(newPrefix) || conflictsWithPreviousPrefix(newPrefix, originalName)));
+
+                                    if (!newPrefix.equals(""))
+                                        currentPrefix = VirtualFile.extractPrefixToken(prefixLength, originalName, true); 
+                                        transactionStartIndex = classIndex;
+                                    } 
+                                    if (currentPrefix != null) {
+                                        assert clazz.superType != null || clazz.type == this.dexItemFactory.objectType;
+                                        current.addClass(clazz);
+                                    } else {
+                                        assert clazz.superType != null;
+                                        assert current.transaction.classes.isEmpty();
+                                        nonPackageClasses.add(clazz);
+                                        classIndex++;
+                                    } 
+                                    if (current.isFilledEnough(this.fillStrategy) || current.isFull()) {
+                                        current.abortTransaction();
+                                        if (classIndex - transactionStartIndex > (classIndex - fileStartIndex) / 5 && prefixLength < 7) {
+                                            prefixLength++;
+                                        } else {
+                                            fileStartIndex = transactionStartIndex;
+                                        if (!this.cycler.hasNext()) {
+                                            if (current.transaction.getNumberOfClasses() == 0) {
+                                                for (int j = transactionStartIndex; j <= classIndex; j++)
+                                                    nonPackageClasses.add(this.classes.get(j)); 
+                                                transactionStartIndex = classIndex + 1;
+                                            } 
+                                            this.cycler.addFile();
+                                        } 
+                                        current = this.cycler.next();
+                                    } 
+                                    currentPrefix = null;
+                                    classIndex = transactionStartIndex - 1;
+                                    assert current != null;
+                                } 
+                            } else {
+                                break;
+                            } 
+                            classIndex++;
+                        } 
+                        current.commitTransaction();
+                        assert !newPackageAssignments.containsKey(currentPrefix);
+                        if (currentPrefix != null)
+                            newPackageAssignments.put(currentPrefix, Integer.valueOf(current.id)); 
+                        if (nonPackageClasses.size() > 0)
+                            addNonPackageClasses(this.cycler, nonPackageClasses); 
+                        return newPackageAssignments;
+                    }
+                }
+            }
+
         }
+
+        rewriteCodeWithJumboStrings {
+            private static void rewriteCodeWithJumboStrings(ObjectToOffsetMapping mapping, Collection<DexProgramClass> classes, DexApplication application) {
+                if (!mapping.hasJumboStrings())
+                    return; 
+                if (application.highestSortingString != null && application.highestSortingString.slowCompareTo(mapping.getFirstJumboString()) < 0)
+                    return; 
+                for (DexProgramClass clazz : classes)
+                    clazz.forEachMethod(method -> method.rewriteCodeWithJumboStrings(mapping, application)); 
+            }
+        }
+
+        //生成 Dex 文件，并写入内容
+        writeDexFile {
+            private byte[] writeDexFile(ObjectToOffsetMapping mapping) throws ApiLevelException {
+                FileWriter fileWriter = new FileWriter(mapping, this.application, this.options, this.namingLens);
+                fileWriter.collect();
+                return fileWriter.generate();
+            }
+
+
+            public FileWriter collect() {
+                (new ProgramClassDependencyCollector(this.application, this.mapping.getClasses())).run(this.mapping.getClasses());
+                this.mixedSectionOffsets.getClassesWithData().forEach(DexProgramClass::sortMembers);
+                this.mixedSectionOffsets.getClassesWithData().forEach(this::addStaticFieldValues);
+                assert this.mixedSectionOffsets.stringData.size() == 0;
+                for (DexString string : this.mapping.getStrings())
+                    this.mixedSectionOffsets.add(string); 
+                for (DexProto proto : this.mapping.getProtos())
+                    this.mixedSectionOffsets.add(proto.parameters); 
+                DexItem.collectAll(this.mixedSectionOffsets, this.mapping.getCallSites());
+                DexItem.collectAll(this.mixedSectionOffsets, (DexItem[])this.mapping.getClasses());
+                return this;
+            }
+
+            public byte[] generate() throws ApiLevelException {
+                //检查 class 文件中的接口方法
+                checkInterfaceMethods();
+                Layout layout = Layout.from(this.mapping);
+                layout.setCodesOffset(layout.dataSectionOffset);
+                List<DexCode> codes = sortDexCodesByClassName(this.mixedSectionOffsets.getCodes(), this.application);
+                this.dest.moveTo(layout.getCodesOffset() + sizeOfCodeItems(codes));
+                Objects.requireNonNull(layout);
+                writeItems(this.mixedSectionOffsets.getDebugInfos(), layout::setDebugInfosOffset, this::writeDebugItem);
+                layout.setTypeListsOffset(this.dest.align(4));
+                this.dest.moveTo(layout.getCodesOffset());
+                assert this.dest.isAligned(4);
+                Objects.requireNonNull(layout);
+                writeItems(codes, layout::alreadySetOffset, this::writeCodeItem, 4);
+                assert layout.getDebugInfosOffset() == 0 || this.dest.position() == layout.getDebugInfosOffset();
+                this.dest.moveTo(layout.getTypeListsOffset());
+                Objects.requireNonNull(layout);
+                writeItems(this.mixedSectionOffsets.getTypeLists(), layout::alreadySetOffset, this::writeTypeList);
+                Objects.requireNonNull(layout);
+                writeItems(this.mixedSectionOffsets.getStringData(), layout::setStringDataOffsets, this::writeStringData);
+                Objects.requireNonNull(layout);
+                writeItems(this.mixedSectionOffsets.getAnnotations(), layout::setAnnotationsOffset, this::writeAnnotation);
+                Objects.requireNonNull(layout);
+                writeItems(this.mixedSectionOffsets.getClassesWithData(), layout::setClassDataOffset, this::writeClassData);
+                Objects.requireNonNull(layout);
+                writeItems(this.mixedSectionOffsets.getEncodedArrays(), layout::setEncodedArrarysOffset, this::writeEncodedArray);
+                Objects.requireNonNull(layout);
+                writeItems(this.mixedSectionOffsets.getAnnotationSets(), layout::setAnnotationSetsOffset, this::writeAnnotationSet, 4);
+                Objects.requireNonNull(layout);
+                writeItems(this.mixedSectionOffsets.getAnnotationSetRefLists(), layout::setAnnotationSetRefListsOffset, this::writeAnnotationSetRefList, 4);
+                Objects.requireNonNull(layout);
+                writeItems(this.mixedSectionOffsets.getAnnotationDirectories(), layout::setAnnotationDirectoriesOffset, this::writeAnnotationDirectory, 4);
+                layout.setMapOffset(this.dest.align(4));
+                writeMap(layout);
+                layout.setEndOfFile(this.dest.position());
+                this.dest.moveTo(112);
+                writeFixedSectionItems(this.mapping.getStrings(), layout.stringIdsOffset, this::writeStringItem);
+                writeFixedSectionItems(this.mapping.getTypes(), layout.typeIdsOffset, this::writeTypeItem);
+                writeFixedSectionItems(this.mapping.getProtos(), layout.protoIdsOffset, this::writeProtoItem);
+                writeFixedSectionItems(this.mapping.getFields(), layout.fieldIdsOffset, this::writeFieldItem);
+                writeFixedSectionItems(this.mapping.getMethods(), layout.methodIdsOffset, this::writeMethodItem);
+                writeFixedSectionItems(this.mapping.getClasses(), layout.classDefsOffset, this::writeClassDefItem);
+                writeFixedSectionItems(this.mapping.getCallSites(), layout.callSiteIdsOffset, this::writeCallSite);
+                writeFixedSectionItems(this.mapping.getMethodHandles(), layout.methodHandleIdsOffset, this::writeMethodHandle);
+                writeHeader(layout);
+                writeSignature(layout);
+                writeChecksum(layout);
+                return Arrays.copyOf(this.dest.asArray(), layout.getEndOfFile());
+            }
+        }
+
+
+        accept {
+            ArchiveConsumer {
+                public void accept(int fileIndex, byte[] data, Set<String> descriptors, DiagnosticsHandler handler) {
+                    super.accept(fileIndex, data, descriptors, handler);
+                    synchronizedWrite(getDexFileName(fileIndex), data, handler);
+                }
+            }
+
+
+            DirectoryConsumer {
+                public void accept(int fileIndex, byte[] data, Set<String> descriptors, DiagnosticsHandler handler) {
+                    super.accept(fileIndex, data, descriptors, handler);
+                    Path target = getTargetDexFile(this.directory, fileIndex);
+                    try {
+                        prepareDirectory();
+                        writeFile(data, target);
+                    } catch (IOException e) {
+                        handler.error((Diagnostic)new IOExceptionDiagnostic(e, (Origin)new PathOrigin(target)));
+                    } 
+                }
+            }
+
+
+            ForwardingConsumer {
+                public void accept(int fileIndex, byte[] data, Set<String> descriptors, DiagnosticsHandler handler) {
+                    if (this.consumer != null)
+                        this.consumer.accept(fileIndex, data, descriptors, handler); 
+                }
+            }
+        }
+
     }
 }
