@@ -1136,8 +1136,7 @@ Dex 编译过程 {
                 //配置输出
                 task.output = output
 
-                task.aaptGeneratedRules = variantScope.artifacts.getFinalArtifactFiles(
-                    InternalArtifactType.LEGACY_MULTIDEX_AAPT_DERIVED_PROGUARD_RULES).get()
+                task.aaptGeneratedRules = variantScope.artifacts.getFinalArtifactFiles(InternalArtifactType.LEGACY_MULTIDEX_AAPT_DERIVED_PROGUARD_RULES).get()
                 task.userMultidexProguardRules = variantScope.variantConfiguration.multiDexKeepProguard
                 task.userMultidexKeepFile = variantScope.variantConfiguration.multiDexKeepFile
 
@@ -1152,6 +1151,7 @@ Dex 编译过程 {
 
 
     //生成 Dex 文件
+    //每个 class 文件对应生成一个 dex 文件
     createDexTasks {
         //生成 Dex 文件
         private void createDexTasks(@NonNull VariantScope variantScope, @NonNull DexingType dexingType) {
@@ -1189,7 +1189,7 @@ Dex 编译过程 {
                             .getVariantConfiguration()
                             .getMinSdkVersionWithTargetDeviceApi()
                             .getFeatureLevel())
-                    .setDexer(variantScope.getDexer())
+                    .setDexer(variantScope.getDexer()) //D8
                     .setUseGradleWorkers(projectOptions.get(BooleanOption.ENABLE_GRADLE_WORKERS))
                     .setInBufferSize(projectOptions.get(IntegerOption.DEXING_READ_BUFFER_SIZE))
                     .setOutBufferSize(projectOptions.get(IntegerOption.DEXING_WRITE_BUFFER_SIZE))
@@ -1212,7 +1212,9 @@ Dex 编译过程 {
             createDexMergingTasks(variantScope, dexingType, enableDexingArtifactTransform);
         }
 
-        //从 class 集生成 Dex 文件
+        //Dex 转换
+        //该 Transform 的 name 为 dexBuilder
+        //将 class 文件转换成 dex 文件，最终会调用 D8.run 执行 Dex 转换
         DexArchiveBuilderTransform {
             @Override
             public void transform(@NonNull TransformInvocation transformInvocation) throws TransformException, IOException, InterruptedException {
@@ -1229,6 +1231,7 @@ Dex 编译过程 {
                     outputProvider.deleteAll();
                 }
 
+                //获取所有发生了变化的文件，用于稍后执行编译
                 Set<File> additionalPaths;
                 DesugarIncrementalTransformHelper desugarIncrementalTransformHelper;
                 if (java8LangSupportType != VariantScope.Java8LangSupport.D8) {
@@ -1237,18 +1240,21 @@ Dex 编译过程 {
                 } else {
                     desugarIncrementalTransformHelper = new DesugarIncrementalTransformHelper(projectVariant, transformInvocation, executor);
                     additionalPaths = desugarIncrementalTransformHelper
-                            .getAdditionalPaths()
+                            .getAdditionalPaths() //添加发生改变的类的路径及其依赖
                             .stream()
                             .map(Path::toFile)
                             .collect(Collectors.toSet());
                 }
 
+                //是否为增量 build
                 List<DexArchiveBuilderCacheHandler.CacheableItem> cacheableItems = new ArrayList<>();
                 boolean isIncremental = transformInvocation.isIncremental();
+                //
                 List<Path> classpath = getClasspath(transformInvocation)
                         .stream()
                         .map(Paths::get)
                         .collect(Collectors.toList());
+                //androidJarClasspath 为 android.jar 的路径，这个 jar 包里面有 Android 应用运行所必须的类
                 List<Path> bootclasspath = getBootClasspath(androidJarClasspath)
                         .stream()
                         .map(Paths::get)
@@ -1265,6 +1271,7 @@ Dex 编译过程 {
                     INSTANCE.registerService(bootclasspathServiceKey, () -> new ClasspathService(bootClasspathProvider));
                     INSTANCE.registerService(classpathServiceKey, () -> new ClasspathService(libraryClasspathProvider));
 
+                    //遍历项目中所有的目录和 jar 包，将目录下的 class 文件转成 dex 文件
                     for (TransformInput input : transformInvocation.getInputs()) {
                         //从目录中读取 class
                         for (DirectoryInput dirInput : input.getDirectoryInputs()) {
@@ -1349,7 +1356,7 @@ Dex 编译过程 {
 
                 ImmutableList.Builder<File> dexArchives = ImmutableList.builder();
                 for (int bucketId = 0; bucketId < numberOfBuckets; bucketId++) {
-
+                    //输出的 Dex 文件的路径
                     File preDexOutputFile;
                     if (input instanceof DirectoryInput) {
                         preDexOutputFile = getOutputForDir(outputProvider, (DirectoryInput) input);
@@ -1497,6 +1504,7 @@ Dex 编译过程 {
                             return;
                         }
 
+                        //判断是否执行增量 build
                         OutputMode outputMode = isIncremental ? OutputMode.DexFilePerClassFile : OutputMode.DexIndexed;
                         builder.setMode(compilationMode)
                                 .setMinApiLevel(minSdkVersion)
@@ -1519,6 +1527,7 @@ Dex 编译过程 {
         }
 
 
+        //Dex 合并
         createDexMergingTasks {
             private void createDexMergingTasks(@NonNull VariantScope variantScope, @NonNull DexingType dexingType, boolean dexingUsingArtifactTransforms) {
 
@@ -1527,6 +1536,7 @@ Dex 编译过程 {
                 // them correctly in an artifact transform.
                 boolean separateFileDependenciesDexingTask = variantScope.getJava8LangSupportType() == Java8LangSupport.D8 && dexingUsingArtifactTransforms;
 
+                //获取远程依赖文件，并将其转为 dex
                 if (separateFileDependenciesDexingTask) {
                     DexFileDependenciesTask.CreationAction desugarFileDeps = new DexFileDependenciesTask.CreationAction(variantScope);
                     taskFactory.register(desugarFileDeps);
@@ -1541,7 +1551,7 @@ Dex 编译过程 {
                                     dexingUsingArtifactTransforms,
                                     separateFileDependenciesDexingTask);
                     taskFactory.register(configAction);
-                } else if (variantScope.getCodeShrinker() != null) {
+                } else if (variantScope.getCodeShrinker() != null) { //是否需要启用代码缩减
                     DexMergingTask.CreationAction configAction =
                             new DexMergingTask.CreationAction(
                                     variantScope,
@@ -1550,10 +1560,10 @@ Dex 编译过程 {
                                     dexingUsingArtifactTransforms);
                     taskFactory.register(configAction);
                 } else {
-                    boolean produceSeparateOutputs =
-                            dexingType == DexingType.NATIVE_MULTIDEX
-                                    && variantScope.getVariantConfiguration().getBuildType().isDebuggable();
+                    //是否将导入的第三方 jar 包和项目的源码分隔开来，输出独立的 dex 文件
+                    boolean produceSeparateOutputs = dexingType == DexingType.NATIVE_MULTIDEX && variantScope.getVariantConfiguration().getBuildType().isDebuggable();
 
+                    //将第三方库的 class 文件合并成 Dex
                     taskFactory.register(
                             new DexMergingTask.CreationAction(
                                     variantScope,
@@ -1561,9 +1571,7 @@ Dex 编译过程 {
                                     DexingType.NATIVE_MULTIDEX,
                                     dexingUsingArtifactTransforms,
                                     separateFileDependenciesDexingTask,
-                                    produceSeparateOutputs
-                                            ? InternalArtifactType.DEX
-                                            : InternalArtifactType.EXTERNAL_LIBS_DEX));
+                                    produceSeparateOutputs ? InternalArtifactType.DEX : InternalArtifactType.EXTERNAL_LIBS_DEX));
 
                     if (produceSeparateOutputs) {
                         DexMergingTask.CreationAction mergeProject =
@@ -1582,78 +1590,352 @@ Dex 编译过程 {
                                         dexingUsingArtifactTransforms);
                         taskFactory.register(mergeLibraries);
                     } else {
-                        DexMergingTask.CreationAction configAction =
-                                new DexMergingTask.CreationAction(
-                                        variantScope,
-                                        DexMergingAction.MERGE_ALL,
-                                        dexingType,
-                                        dexingUsingArtifactTransforms);
+                        //将所有的 class 文件合并成 Dex
+                        DexMergingTask.CreationAction configAction = new DexMergingTask.CreationAction(
+                                variantScope,
+                                DexMergingAction.MERGE_ALL,
+                                dexingType,
+                                dexingUsingArtifactTransforms);
                         taskFactory.register(configAction);
                     }
                 }
 
                 variantScope
                         .getTransformManager()
-                        .addStream(
-                                OriginalStream.builder(project, "final-dex")
-                                        .addContentTypes(ExtendedContentType.DEX)
-                                        .addScope(Scope.PROJECT)
-                                        .setFileCollection(
-                                                variantScope
-                                                        .getArtifacts()
-                                                        .getFinalArtifactFiles(InternalArtifactType.DEX)
-                                                        .get())
-                                        .build());
+                        .addStream(OriginalStream.builder(project, "final-dex")
+                                .addContentTypes(ExtendedContentType.DEX)
+                                .addScope(Scope.PROJECT)
+                                .setFileCollection(variantScope
+                                        .getArtifacts()
+                                        .getFinalArtifactFiles(InternalArtifactType.DEX)
+                                        .get())
+                                .build());
             }
 
 
-            DexMergingTask.CreationAction {
-                override fun configure(task: DexMergingTask) {
-                    super.configure(task)
+            DexMergingTask {
+                //创建并配置 DexMerge 任务
+                DexMergingTask.CreationAction {
+                    override fun configure(task: DexMergingTask) {
+                        super.configure(task)
 
-                    task.dexFiles = getDexFiles(action)
-                    task.mergingThreshold = getMergingThreshold(action, task)
+                        task.dexFiles = getDexFiles(action)
+                        task.mergingThreshold = getMergingThreshold(action, task)
 
-                    task.dexingType = dexingType
-                    if (DexMergingAction.MERGE_ALL == action && dexingType === DexingType.LEGACY_MULTIDEX) {
-                        task.mainDexListFile = variantScope.artifacts.getFinalArtifactFiles(InternalArtifactType.LEGACY_MULTIDEX_MAIN_DEX_LIST)
+                        task.dexingType = dexingType
+                        if (DexMergingAction.MERGE_ALL == action && dexingType === DexingType.LEGACY_MULTIDEX) {
+                            task.mainDexListFile = variantScope.artifacts.getFinalArtifactFiles(InternalArtifactType.LEGACY_MULTIDEX_MAIN_DEX_LIST)
+                        }
+
+                        task.errorFormatMode = SyncOptions.getErrorFormatMode(variantScope.globalScope.projectOptions)
+                        task.dexMerger = variantScope.dexMerger
+                        task.minSdkVersion = variantScope.variantConfiguration.minSdkVersionWithTargetDeviceApi.featureLevel
+                        task.isDebuggable = variantScope.variantConfiguration.buildType.isDebuggable
+                        if (variantScope.globalScope.projectOptions[BooleanOption.ENABLE_DUPLICATE_CLASSES_CHECK]) {
+                            task.duplicateClassesCheck = variantScope.artifacts.getFinalArtifactFiles(InternalArtifactType.DUPLICATE_CLASSES_CHECK)
+                        }
+                        if (separateFileDependenciesDexingTask) {
+                            task.fileDependencyDexFiles = variantScope.artifacts.getFinalProduct(InternalArtifactType.EXTERNAL_FILE_LIB_DEX_ARCHIVES)
+                        }
+                        task.outputDir = output
                     }
 
-                    task.errorFormatMode = SyncOptions.getErrorFormatMode(variantScope.globalScope.projectOptions)
-                    task.dexMerger = variantScope.dexMerger
-                    task.minSdkVersion = variantScope.variantConfiguration.minSdkVersionWithTargetDeviceApi.featureLevel
-                    task.isDebuggable = variantScope.variantConfiguration.buildType.isDebuggable
-                    if (variantScope.globalScope.projectOptions[BooleanOption.ENABLE_DUPLICATE_CLASSES_CHECK]) {
-                        task.duplicateClassesCheck = variantScope.artifacts.getFinalArtifactFiles(InternalArtifactType.DUPLICATE_CLASSES_CHECK)
-                    }
-                    if (separateFileDependenciesDexingTask) {
-                        task.fileDependencyDexFiles = variantScope.artifacts.getFinalProduct(InternalArtifactType.EXTERNAL_FILE_LIB_DEX_ARCHIVES)
-                    }
-                    task.outputDir = output
-                }
 
+                    private fun getDexFiles(action: DexMergingAction): FileCollection {
+                        val attributes = getDexingArtifactConfiguration(variantScope).getAttributes()
 
-                /**
-                 * 获取触发 Dex 文件合并的文件数
-                 */
-                private fun getMergingThreshold(action: DexMergingAction, task: DexMergingTask): Int {
-                    return when (action) {
-                        //LIBRARIES_M_PLUS_MAX_THRESHOLD 值为 500
-                        //LIBRARIES_MERGING_THRESHOLD 值为 51
-                        DexMergingAction.MERGE_LIBRARY_PROJECTS ->
-                            when {
-                                variantScope.variantConfiguration.minSdkVersionWithTargetDeviceApi.featureLevel < 23 -> {
-                                    task.outputs.cacheIf { getAllRegularFiles(task.dexFiles.files).size < LIBRARIES_MERGING_THRESHOLD }
-                                    LIBRARIES_MERGING_THRESHOLD
+                        fun forAction(action: DexMergingAction): FileCollection {
+                            when (action) {
+                                DexMergingAction.MERGE_EXTERNAL_LIBS -> {
+                                    return if (dexingUsingArtifactTransforms) {
+                                        // If the file dependencies are being dexed in a task, don't also include them here
+                                        val artifactScope: AndroidArtifacts.ArtifactScope = if (separateFileDependenciesDexingTask) {
+                                            AndroidArtifacts.ArtifactScope.REPOSITORY_MODULE
+                                        } else {
+                                            AndroidArtifacts.ArtifactScope.EXTERNAL
+                                        }
+                                         variantScope.getArtifactFileCollection(
+                                            AndroidArtifacts.ConsumedConfigType.RUNTIME_CLASSPATH,
+                                            artifactScope,
+                                            AndroidArtifacts.ArtifactType.DEX,
+                                            attributes
+                                        )
+                                    } else {
+                                        variantScope.globalScope.project.files(
+                                            variantScope.transformManager.getPipelineOutputAsFileCollection(
+                                                StreamFilter.DEX_ARCHIVE,
+                                                StreamFilter {_, scopes -> scopes == setOf(QualifiedContent.Scope.EXTERNAL_LIBRARIES) }
+                                            ))
+                                    }
                                 }
-                                else -> LIBRARIES_M_PLUS_MAX_THRESHOLD
+                                DexMergingAction.MERGE_LIBRARY_PROJECTS -> {
+                                    return if (dexingUsingArtifactTransforms) {
+                                        variantScope.getArtifactFileCollection(
+                                            AndroidArtifacts.ConsumedConfigType.RUNTIME_CLASSPATH,
+                                            AndroidArtifacts.ArtifactScope.PROJECT,
+                                            AndroidArtifacts.ArtifactType.DEX,
+                                            attributes
+                                        )
+                                    } else {
+                                        variantScope.globalScope.project.files(
+                                            variantScope.transformManager.getPipelineOutputAsFileCollection(
+                                                StreamFilter.DEX_ARCHIVE,
+                                                StreamFilter {_, scopes ->
+                                                    scopes == setOf(QualifiedContent.Scope.SUB_PROJECTS)
+                                                            || scopes == setOf(
+                                                        QualifiedContent.Scope.SUB_PROJECTS, QualifiedContent.Scope.EXTERNAL_LIBRARIES
+                                                    )}
+                                            ))
+                                    }
+                                }
+                                DexMergingAction.MERGE_PROJECT -> {
+                                    val files =
+                                        variantScope.globalScope.project.files(
+                                            variantScope.transformManager.getPipelineOutputAsFileCollection { types, scopes ->
+                                                types.contains(ExtendedContentType.DEX_ARCHIVE) && scopes.contains(
+                                                    QualifiedContent.Scope.PROJECT
+                                                )
+                                            }
+                                        )
+                                    val variantType = variantScope.type
+                                    if (variantType.isTestComponent && variantType.isApk) {
+                                        val testedVariantData =
+                                            checkNotNull(variantScope.testedVariantData) { "Test component without testedVariantData" }
+                                        if (dexingUsingArtifactTransforms && testedVariantData.type.isAar) {
+                                            // If dexing using artifact transforms, library production code will
+                                            // be dex'ed in a task, so we need to fetch the output directly.
+                                            // Otherwise, it will be in the dex'ed in the dex builder transform.
+                                            files.from(
+                                                testedVariantData.scope.artifacts.getFinalArtifactFiles(
+                                                    InternalArtifactType.DEX
+                                                )
+                                            )
+                                        }
+                                    }
+
+                                    return files
+                                }
+                                DexMergingAction.MERGE_ALL -> {
+                                    val external = if (dexingType == DexingType.LEGACY_MULTIDEX) {
+                                        // we have to dex it
+                                        forAction(DexMergingAction.MERGE_EXTERNAL_LIBS)
+                                    } else {
+                                        // we merge external dex in a separate task
+                                        variantScope.artifacts
+                                            .getFinalArtifactFiles(InternalArtifactType.EXTERNAL_LIBS_DEX)
+                                            .get()
+                                    }
+                                    return forAction(DexMergingAction.MERGE_PROJECT) +
+                                            forAction(DexMergingAction.MERGE_LIBRARY_PROJECTS) +
+                                            external
+                                }
                             }
-                        else -> 0
+                        }
+
+                        return forAction(action)
+                    }
+
+
+                    /**
+                     * 获取触发 Dex 文件合并的文件数
+                     */
+                    private fun getMergingThreshold(action: DexMergingAction, task: DexMergingTask): Int {
+                        return when (action) {
+                            //LIBRARIES_M_PLUS_MAX_THRESHOLD 值为 500
+                            //LIBRARIES_MERGING_THRESHOLD 值为 51
+                            DexMergingAction.MERGE_LIBRARY_PROJECTS ->
+                                when {
+                                    variantScope.variantConfiguration.minSdkVersionWithTargetDeviceApi.featureLevel < 23 -> {
+                                        task.outputs.cacheIf { getAllRegularFiles(task.dexFiles.files).size < LIBRARIES_MERGING_THRESHOLD }
+                                        LIBRARIES_MERGING_THRESHOLD
+                                    }
+                                    else -> LIBRARIES_M_PLUS_MAX_THRESHOLD
+                                }
+                            else -> 0
+                        }
                     }
                 }
 
-            }
 
+
+
+
+                //执行 DexMerge 任务，最终调用 D8.run 执行 Dex 的合并
+                DexMergingTask.doTaskAction {
+                    //DexMergingTask.kt
+                    override fun doTaskAction() {
+                        workers.use {
+                            it.submit(DexMergingTaskRunnable::class.java, DexMergingParams(
+                                    dexingType,
+                                    errorFormatMode,
+                                    dexMerger,
+                                    minSdkVersion,
+                                    isDebuggable,
+                                    mergingThreshold,
+                                    mainDexListFile?.singleFile(),
+                                    dexFiles.files,
+                                    fileDependencyDexFiles?.get()?.asFile,
+                                    outputDir
+                                )
+                            )
+                        }
+                    }
+
+                    //DexMergingTask.kt
+                    override fun run() {
+                        val logger = LoggerWrapper.getLogger(DexMergingTaskRunnable::class.java)
+                        val messageReceiver = MessageReceiverImpl(
+                            params.errorFormatMode,
+                            Logging.getLogger(DexMergingTask::class.java)
+                        )
+                        val forkJoinPool = ForkJoinPool()
+
+                        val outputHandler = ParsingProcessOutputHandler(
+                            ToolOutputParser(DexParser(), Message.Kind.ERROR, logger),
+                            ToolOutputParser(DexParser(), logger),
+                            messageReceiver
+                        )
+
+                        var processOutput: ProcessOutput? = null
+                        try {
+                            processOutput = outputHandler.createOutput()
+                            val dexFiles = params.getAllDexFiles()
+                            FileUtils.cleanOutputDir(params.outputDir)
+
+                            if (dexFiles.isEmpty()) {
+                                return
+                            }
+
+                            val allDexFiles = lazy { getAllRegularFiles(dexFiles) }
+                            if (dexFiles.size >= params.mergingThreshold || allDexFiles.value.size >= params.mergingThreshold) {
+                                DexMergerTransformCallable(
+                                    messageReceiver,
+                                    params.dexingType,
+                                    processOutput,
+                                    params.outputDir,
+                                    dexFiles.map { it.toPath() }.iterator(),
+                                    params.mainDexListFile?.toPath(),
+                                    forkJoinPool,
+                                    params.dexMerger,
+                                    params.minSdkVersion,
+                                    params.isDebuggable
+                                ).call()
+                            } else {
+                                val outputPath = { id: Int -> params.outputDir.resolve("classes_$id.${SdkConstants.EXT_DEX}") }
+                                var index = 0
+                                for (file in allDexFiles.value) {
+                                    if (file.extension == SdkConstants.EXT_JAR) {
+                                        // Dex files can also come from jars when dexing is not done in artifact
+                                        // transforms. See b/130965921 for details.
+                                        ZipFile(file).use {
+                                            for (entry in it.entries()) {
+                                                BufferedInputStream(it.getInputStream(entry)).use { inputStream ->
+                                                    BufferedOutputStream(outputPath(index++).outputStream()).use { outputStream ->
+                                                        inputStream.copyTo(outputStream)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        file.copyTo(outputPath(index++))
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            PluginCrashReporter.maybeReportException(e)
+                            // Print the error always, even without --stacktrace
+                            logger.error(null, Throwables.getStackTraceAsString(e))
+                            throw TransformException(e)
+                        } finally {
+                            processOutput?.let {
+                                try {
+                                    outputHandler.handleOutput(it)
+                                    processOutput.close()
+                                } catch (ignored: ProcessException) {
+                                }
+                            }
+                            forkJoinPool.shutdown()
+                            forkJoinPool.awaitTermination(100, TimeUnit.SECONDS)
+                        }
+                    }
+
+                    //DexMergerTransformCallable.java
+                    @Override
+                    public Void call() throws Exception {
+                        DexArchiveMerger merger;
+                        switch (dexMerger) {
+                            case DX:
+                                DxContext dxContext = new DxContext(processOutput.getStandardOutput(), processOutput.getErrorOutput());
+                                merger = DexArchiveMerger.createDxDexMerger(dxContext, forkJoinPool, isDebuggable);
+                                break;
+                            case D8:
+                                int d8MinSdkVersion = minSdkVersion;
+                                if (d8MinSdkVersion < 21 && dexingType == DexingType.NATIVE_MULTIDEX) {
+                                    // D8 has baked-in logic that does not allow multiple dex files without
+                                    // main dex list if min sdk < 21. When we deploy the app to a device with api
+                                    // level 21+, we will promote legacy multidex to native multidex, but the min
+                                    // sdk version will be less than 21, which will cause D8 failure as we do not
+                                    // supply the main dex list. In order to prevent that, it is safe to set min
+                                    // sdk version to 21.
+                                    d8MinSdkVersion = 21;
+                                }
+                                merger = DexArchiveMerger.createD8DexMerger(messageReceiver, d8MinSdkVersion, isDebuggable, forkJoinPool);
+                                break;
+                            default:
+                                throw new AssertionError("Unknown dex merger " + dexMerger.name());
+                        }
+
+                        //调用 D8DexArchiveMerger.java 中的 mergeDexArchives
+                        merger.mergeDexArchives(dexArchives, dexOutputDir.toPath(), mainDexList, dexingType);
+                        return null;
+                    }
+
+                    @Override
+                    public void mergeDexArchives(@NonNull Iterator<Path> inputs, @NonNull Path outputDir, @Nullable Path mainDexClasses, @NonNull DexingType dexingType) throws DexArchiveMergerException {
+
+                        List<Path> inputsList = Lists.newArrayList(inputs);
+                        if (LOGGER.isLoggable(Level.INFO)) {
+                            LOGGER.log(Level.INFO, "Merging to '" + outputDir.toAbsolutePath().toString() + "' with D8 from " + inputsList .stream() .map(path -> path.toAbsolutePath().toString()) .collect(Collectors.joining(", ")));
+                        }
+                        if (inputsList.isEmpty()) {
+                            return;
+                        }
+
+                        D8DiagnosticsHandler d8DiagnosticsHandler = new InterceptingDiagnosticsHandler();
+                        D8Command.Builder builder = D8Command.builder(d8DiagnosticsHandler);
+                        builder.setDisableDesugaring(true);
+
+                        for (Path input : inputsList) {
+                            try (DexArchive archive = DexArchives.fromInput(input)) {
+                                for (DexArchiveEntry dexArchiveEntry : archive.getFiles()) {
+                                    builder.addDexProgramData(dexArchiveEntry.getDexFileContent(), D8DiagnosticsHandler.getOrigin(dexArchiveEntry));
+                                }
+                            } catch (IOException e) {
+                                throw getExceptionToRethrow(e, d8DiagnosticsHandler);
+                            }
+                        }
+                        try {
+                            if (mainDexClasses != null) {
+                                builder.addMainDexListFiles(mainDexClasses);
+                            }
+                            builder.setMinApiLevel(minSdkVersion)
+                                    .setMode(compilationMode)
+                                    .setOutput(outputDir, OutputMode.DexIndexed)
+                                    .setDisableDesugaring(true)
+                                    .setIntermediate(false);
+                            D8.run(builder.build(), forkJoinPool);
+                        } catch (CompilationFailedException e) {
+                            throw getExceptionToRethrow(e, d8DiagnosticsHandler);
+                        }
+                    }
+                }
+
+                D8 {
+
+                }
+
+            }
+            
         }
     }
 
@@ -1719,9 +2001,7 @@ Dex 编译过程 {
                 outputProvider.deleteAll()
                 FileUtils.deleteRecursivelyIfExists(outputDir)
 
-                val builder = DexSplitterTool.Builder(
-                    outputDir.toPath(), mappingFile?.toPath(), mainDexList?.singleFile()?.toPath()
-                )
+                val builder = DexSplitterTool.Builder(outputDir.toPath(), mappingFile?.toPath(), mainDexList?.singleFile()?.toPath())
 
                 for (dirInput in TransformInputUtil.getDirectories(transformInvocation.inputs)) {
                     dirInput.listFiles()?.toList()?.map { it.toPath() }?.forEach { builder.addInputArchive(it) }
@@ -1866,12 +2146,19 @@ D8 {
     }
 
     ApplicationReader.read {
+        public final DexApplication read(ExecutorService executorService) throws IOException, ExecutionException {
+            return read(null, executorService, ProgramClassCollection::resolveClassConflictImpl);
+        }
+
+
+        //proguardMap: null
         public final DexApplication read(StringResource proguardMap, ExecutorService executorService, ProgramClassConflictResolver resolver) throws IOException, ExecutionException {
             this.timing.begin("DexApplication.read");
             LazyLoadedDexApplication.Builder builder = DexApplication.builder(this.itemFactory, this.timing, resolver);
             try {
                 List<Future<?>> futures = new ArrayList<>();
                 readProguardMap(proguardMap, (DexApplication.Builder<?>)builder, executorService, futures);
+                //MainDexList 为空
                 readMainDexList((DexApplication.Builder<?>)builder, executorService, futures);
                 ClassReader classReader = new ClassReader(executorService, futures);
                 classReader.readSources();
@@ -1883,6 +2170,15 @@ D8 {
                 this.timing.end();
             } 
             return (DexApplication)builder.build();
+        }
+
+        private void readMainDexList(DexApplication.Builder<?> builder, ExecutorService executorService, List<Future<?>> futures) {
+            if (this.inputApp.hasMainDexList())
+                futures.add(executorService.submit(() -> {
+                    for (StringResource resource : this.inputApp.getMainDexListResources())
+                        builder.addToMainDexList(MainDexList.parseList(resource, this.itemFactory)); 
+                    builder.addToMainDexList((Collection)this.inputApp.getMainDexClasses().stream().map(()).collect(Collectors.toList()));
+                })); 
         }
 
         ClassReader {
@@ -1898,9 +2194,9 @@ D8 {
                     assert resource.getKind() == ProgramResource.Kind.CF;
                     cfResources.add(resource);
                 } 
-                //读取目录下的 class 文件
+                //读取 dex 文件
                 readDexSources(dexResources, ClassKind.PROGRAM, this.programClasses);
-                //读取 jar 文件中的 class
+                //读取 jar 文件
                 readClassSources(cfResources, ClassKind.PROGRAM, this.programClasses);
             }
 
@@ -1916,7 +2212,7 @@ D8 {
                     } 
                     ApplicationReader.this.options.minApiLevel = computedMinApiLevel;
                     for (DexFileReader reader : fileReaders)
-                        DexFileReader.populateIndexTables(reader); 
+                        DexFileReader.populateIndexTables(reader); //计算 Dex 文件中的索引数
                     if (!ApplicationReader.this.options.skipReadingDexCode)
                     for (DexFileReader reader : fileReaders) {
                         this.futures.add(this.executorService.submit(() -> {
@@ -1925,6 +2221,19 @@ D8 {
                             reader.addClassDefsTo(classKind.bridgeConsumer(classes::add));
                             }));
                     }  
+                } 
+            }
+
+            private <T extends com.android.tools.r8.graph.DexClass> void readClassSources(List<ProgramResource> classSources, ClassKind classKind, Queue<T> classes) {
+                Objects.requireNonNull(classes);
+                JarClassFileReader reader = new JarClassFileReader(this.application, classKind.bridgeConsumer(classes::add));
+                for (ProgramResource input : classSources) {
+                    this.futures.add(this.executorService.submit(() -> {
+                        try (InputStream is = input.getByteStream()) {
+                          reader.read(input.getOrigin(), classKind, is);
+                        } 
+                        return null;
+                    }));
                 } 
             }
         }
@@ -2181,7 +2490,6 @@ D8 {
                     }
                 }
             }
-
         }
 
         rewriteCodeWithJumboStrings {
@@ -2300,6 +2608,5 @@ D8 {
                 }
             }
         }
-
     }
 }
