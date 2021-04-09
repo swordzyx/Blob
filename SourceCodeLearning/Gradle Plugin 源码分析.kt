@@ -10,6 +10,16 @@ BasePlugin.apply -> BasePlugin.basePluginApply -> BasePlugin.createTasks -> Base
 
 Android 中 Gradle 插件的应用都是从 apply 开始的。该方法位于 BasePlugin 中。
 
+构建 apk 的入口类是 AppPlugin
+class AppPlugin: BasePlugin() {
+    override fun apply(project: Project) {
+        super.apply(project)
+
+        //com.android.internal.application，会执行 com.android.build.gradle.internal.plugins.AppPlugin 中的 apply 方法
+        project.apply(INTERNAL_PLUGIN_ID)
+    }
+}
+
 
 //com.android.build.gradle.BasePlugin.kt
 @Override
@@ -28,11 +38,13 @@ private void basePluginApply(@NonNull Project project) {
 
     this.project = project;
     this.projectOptions = new ProjectOptions(project);
+    //检查 Gradle Plugin 的版本号，也会检查 Android Studio 的版本以及其他的版本号
     checkGradleVersion(project, getLogger(), projectOptions);
     DependencyResolutionChecks.registerDependencyCheck(project, projectOptions);
 
     project.getPluginManager().apply(AndroidBasePlugin.class);
 
+    //检查 Module 名字是否合法，路径检查
     checkPathForErrors();
     checkModulesForErrors();
 
@@ -56,21 +68,22 @@ private void basePluginApply(@NonNull Project project) {
     // 执行该分支
     if (!projectOptions.get(BooleanOption.ENABLE_NEW_DSL_AND_API)) {
 
-    	//记录 configureProject 的路径和执行的时间点
+        //record 用于记录指定方法的耗时
+    	//调用 configureProject 并记录该方法的耗时
         threadRecorder.record(
                 ExecutionType.BASE_PLUGIN_PROJECT_CONFIGURE,
                 project.getPath(),
                 null,
                 this::configureProject);
 
-        //记录 configureExtension 的路径和执行的时间点
+        //调用 configureExtension 并记录该方法的耗时
         threadRecorder.record(
                 ExecutionType.BASE_PLUGIN_PROJECT_BASE_EXTENSION_CREATION,
                 project.getPath(),
                 null,
                 this::configureExtension);
 
-        //记录 createTasks 的路径和执行的时间点
+        //调用 createTasks 并记录该方法的耗时
         threadRecorder.record(
                 ExecutionType.BASE_PLUGIN_PROJECT_TASKS_CREATION,
                 project.getPath(),
@@ -109,6 +122,7 @@ private void basePluginApply(@NonNull Project project) {
     }
 }
 
+//配置 Project，构建 Project 
 //com.android.build.gradle.BasePlugin.kt
 private void configureProject() {
     final Gradle gradle = project.getGradle();
@@ -118,6 +132,7 @@ private void configureProject() {
 
     final SyncIssueHandler syncIssueHandler = extraModelInfo.getSyncIssueHandler();
 
+    //链接 Android Framework 层源码
     SdkComponents sdkComponents =
             SdkComponents.Companion.createSdkComponents(
                     project,
@@ -128,8 +143,7 @@ private void configureProject() {
                     syncIssueHandler);
 
     dataBindingBuilder = new DataBindingBuilder();
-    dataBindingBuilder.setPrintMachineReadableOutput(
-            SyncOptions.getErrorFormatMode(projectOptions) == ErrorFormatMode.MACHINE_PARSABLE);
+    dataBindingBuilder.setPrintMachineReadableOutput(SyncOptions.getErrorFormatMode(projectOptions) == ErrorFormatMode.MACHINE_PARSABLE);
 
     if (projectOptions.hasRemovedOptions()) {
         syncIssueHandler.reportWarning(
@@ -199,7 +213,7 @@ private void configureProject() {
                 @Override
                 public void projectsEvaluated(@NonNull Gradle gradle) {}
 
-                //构建完成时回调该方法，主要清除
+                //构建结束之后清除缓存
                 @Override
                 public void buildFinished(@NonNull BuildResult buildResult) {
                     // Do not run buildFinished for included project in composite build.
@@ -236,6 +250,7 @@ configureExtension {
 	//配置扩展
 	private void configureExtension() {
 	    ObjectFactory objectFactory = project.getObjects();
+        //首先创建 4 个对象的容器，保存 build.gradle 中 android{..} 配置的属性
 	    //创建 BuildType 类型的 Container，也就是 debug 或者 release
 	    final NamedDomainObjectContainer<BuildType> buildTypeContainer =
 	            project.container(
@@ -357,7 +372,7 @@ configureExtension {
             @NonNull NamedDomainObjectContainer<BaseVariantOutput> buildOutputs,
             @NonNull SourceSetManager sourceSetManager,
             @NonNull ExtraModelInfo extraModelInfo) {
-    	//对应 build.gradle 中的 android 配置块
+    	//创建名称为 android 的扩展
         return project.getExtensions()
                 .create("android",
                         getExtensionClass(),
