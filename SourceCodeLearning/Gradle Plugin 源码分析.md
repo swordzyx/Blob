@@ -11,7 +11,6 @@
 
 
 打包 apk 使用的是 “com.android.application” 插件，在 `gradle-3.4.2.jar/META-INF/gradle-plugins/com.android.application.properties` 文件中配置了 “com.android.application” 插件对应的实现类
-
 ```groovy
     //com.android.application.properties
     implementation-class=com.android.build.gradle.AppPlugin
@@ -30,7 +29,7 @@ BasePlugin.apply {
                     pluginSpecificApply(project);
                 });
     }
-
+    
     //com.android.build.gradle.BasePlugin.kt
     private void basePluginApply(@NonNull Project project) {
         // We run by default in headless mode, so the JVM doesn't steal focus.
@@ -157,6 +156,7 @@ configureProject {
                     Type.GENERIC, projectOptions.getRemovedOptionsErrorMessage());
         }
 
+
         if (projectOptions.hasDeprecatedOptions()) {
             extraModelInfo
                     .getDeprecationReporter()
@@ -245,6 +245,7 @@ configureProject {
                                     Main.clearInternTables();
                                 });
                         DeprecationReporterImpl.Companion.clean();
+
                     }
                 });
 
@@ -258,6 +259,7 @@ configureExtension {
 	//配置扩展
 	private void configureExtension() {
 	    ObjectFactory objectFactory = project.getObjects();
+        //首先创建 4 个对象的容器，保存 build.gradle 中 android{..} 配置的属性
 	    //创建 BuildType 类型的 Container，也就是 debug 或者 release
 	    final NamedDomainObjectContainer<BuildType> buildTypeContainer =
 	            project.container(
@@ -379,7 +381,7 @@ configureExtension {
             @NonNull NamedDomainObjectContainer<BaseVariantOutput> buildOutputs,
             @NonNull SourceSetManager sourceSetManager,
             @NonNull ExtraModelInfo extraModelInfo) {
-    	//对应 build.gradle 中的 android 配置块
+    	//创建名称为 android 的扩展
         return project.getExtensions()
                 .create("android",
                         getExtensionClass(),
