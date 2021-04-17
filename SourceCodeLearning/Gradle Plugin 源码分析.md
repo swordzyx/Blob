@@ -1,233 +1,255 @@
 
-BasePlugin.apply -> BasePlugin.basePluginApply -> BasePlugin.createTasks -> BasePlugin.createAndroidTask -> 
+方法调用流程：
+
+`BasePlugin.apply -> BasePlugin.basePluginApply -> BasePlugin.createTasks -> BasePlugin.createAndroidTask -> 
  VariantManager.createAndriodTasks -> VariantManager.createTasksForVariantData -> VariantManager.createTasksForVariantScope -> 
  TaskManager.createCompileTask -> TaskManager.createPostCompilationTasks -> TaskManager.createDexTasks -> 
  DexArchiveBuilderTransform.transform -> convertToDexArchive -> DexArchiveBuilderTransform.DexConversionWorkAction.run -> launchProcessing -> convert -> 
- D8.run -> ApplicationWriter.write -> VirtualFile.distribute -> VirtualFile.FillFilesDistributor -> VirtualFile.PackageSplitPopulator.call
+ D8.run -> ApplicationWriter.write -> VirtualFile.distribute -> VirtualFile.FillFilesDistributor -> VirtualFile.PackageSplitPopulator.call`
 
 
 
 
-Android 中 Gradle 插件的应用都是从 apply 开始的。该方法位于 BasePlugin 中。
+打包 apk 使用的是 “com.android.application” 插件，在 `gradle-3.4.2.jar/META-INF/gradle-plugins/com.android.application.properties` 文件中配置了 “com.android.application” 插件对应的实现类
 
+```groovy
+    //com.android.application.properties
+    implementation-class=com.android.build.gradle.AppPlugin
+```
 
-//com.android.build.gradle.BasePlugin.kt
-@Override
-public final void apply(@NonNull Project project) {
-    CrashReporting.runAction(
-            () -> {
-                basePluginApply(project);
-                pluginSpecificApply(project);
-            });
+从以上代码可看出 `com.android.application` 插件的实现类是 AppPlugin，它继承自 AbstractAppPlugin 类，AbstractAppPlugin 继承自 BasePlugin，最终 `com.android.application` 插件的入口是 BasePlugin 中的 apply 方法。所有的插件的入口都是 Plugin 的 apply 方法。
+
+//最终会调用 configureProject，configureExtension，createTasks 这三个函数
+BasePlugin.apply {
+    //com.android.build.gradle.BasePlugin.kt
+    @Override
+    public final void apply(@NonNull Project project) {
+        CrashReporting.runAction(
+                () -> {
+                    basePluginApply(project);
+                    pluginSpecificApply(project);
+                });
+    }
+
+    //com.android.build.gradle.BasePlugin.kt
+    private void basePluginApply(@NonNull Project project) {
+        // We run by default in headless mode, so the JVM doesn't steal focus.
+        System.setProperty("java.awt.headless", "true");
+
+        this.project = project;
+        this.projectOptions = new ProjectOptions(project);
+        //检查 Gradle 版本，每个版本的 Android Gradle 插件都有对应的 Gradle 版本限制，不能低于某个版本。
+        checkGradleVersion(project, getLogger(), projectOptions);
+        //检查依赖，并确保在配置阶段不去解析依赖
+        DependencyResolutionChecks.registerDependencyCheck(project, projectOptions);
+
+        //应用一个 AndroidBasePlugin 插件，这是为了让其他插件识别当前应用的是一个 Android 插件
+        project.getPluginManager().apply(AndroidBasePlugin.class);
+
+        //检查 Project 的路径是否有错，有错则抛出一个 StopExecutionException 异常
+        checkPathForErrors();
+        //检查子 module 的结构是否有错，主要检查不同的 module 是否有相同的标识，如果有则抛出 StopExecutionException。
+        checkModulesForErrors();
+
+        //插件初始化，立即执行。（Gradle Deamon 永远不会同时执行两个构建流程）
+        PluginInitializer.initialize(project);
+        //初始化 ProcessProfileWriterFactory 实例，用于记录构建过程中的配置信息。并将该实例注册到 Project 中，用作监听
+        RecordingBuildListener buildListener = ProfilerInitializer.init(project, projectOptions);
+        ProfileAgent.INSTANCE.register(project.getName(), buildListener);
+        threadRecorder = ThreadRecorder.get();
+
+        Workers.INSTANCE.initFromProject(
+                projectOptions,
+                // possibly, in the future, consider using a pool with a dedicated size
+                // using the gradle parallelism settings.
+                ForkJoinPool.commonPool());
+
+        //为 project 实例设置 Android Plugin Version，插件类型，插件生成器，project 等
+        ProcessProfileWriter.getProject(project.getPath())
+                .setAndroidPluginVersion(Version.ANDROID_GRADLE_PLUGIN_VERSION)
+                .setAndroidPlugin(getAnalyticsPluginType())
+                .setPluginGeneration(GradleBuildProject.PluginGeneration.FIRST)
+                .setOptions(AnalyticsUtil.toProto(projectOptions));
+
+        if (!projectOptions.get(BooleanOption.ENABLE_NEW_DSL_AND_API)) {
+
+            //执行 configProject 函数，用于配置 project，记录 configureProject 执行的时间
+            threadRecorder.record(
+                    ExecutionType.BASE_PLUGIN_PROJECT_CONFIGURE,
+                    project.getPath(),
+                    null,
+                    this::configureProject);
+
+            //执行 configureExtension 函数，用于配置 Extension，记录 configureExtension 执行的时间
+            threadRecorder.record(
+                    ExecutionType.BASE_PLUGIN_PROJECT_BASE_EXTENSION_CREATION,
+                    project.getPath(),
+                    null,
+                    this::configureExtension);
+
+            //执行 createTasks 函数，用于创建 Task，记录 createTasks 执行的时间
+            threadRecorder.record(
+                    ExecutionType.BASE_PLUGIN_PROJECT_TASKS_CREATION,
+                    project.getPath(),
+                    null,
+                    this::createTasks);
+        } else {
+            // Apply the Java plugin
+            project.getPlugins().apply(JavaBasePlugin.class);
+
+            // create the delegate
+            ProjectWrapper projectWrapper = new ProjectWrapper(project);
+            PluginDelegate<E> delegate =
+                    new PluginDelegate<>(
+                            project.getPath(),
+                            project.getObjects(),
+                            project.getExtensions(),
+                            project.getConfigurations(),
+                            projectWrapper,
+                            projectWrapper,
+                            project.getLogger(),
+                            projectOptions,
+                            getTypedDelegate());
+
+            delegate.prepareForEvaluation();
+
+            // after evaluate callbacks
+            project.afterEvaluate(
+                    CrashReporting.afterEvaluate(
+                            p -> {
+                                threadRecorder.record(
+                                        ExecutionType.BASE_PLUGIN_CREATE_ANDROID_TASKS,
+                                        p.getPath(),
+                                        null,
+                                        delegate::afterEvaluate);
+                            }));
+        }
+    }
 }
 
-//com.android.build.gradle.BasePlugin.kt
-private void basePluginApply(@NonNull Project project) {
-    // We run by default in headless mode, so the JVM doesn't steal focus.
-    System.setProperty("java.awt.headless", "true");
 
-    this.project = project;
-    this.projectOptions = new ProjectOptions(project);
-    checkGradleVersion(project, getLogger(), projectOptions);
-    DependencyResolutionChecks.registerDependencyCheck(project, projectOptions);
+configureProject {
+    //com.android.build.gradle.BasePlugin.kt
+    private void configureProject() {
+        //获取 Gradle 实例，表示对 Gradle 的调用
+        final Gradle gradle = project.getGradle();
+        ObjectFactory objectFactory = project.getObjects();
 
-    project.getPluginManager().apply(AndroidBasePlugin.class);
+        extraModelInfo = new ExtraModelInfo(project.getPath(), projectOptions, project.getLogger());
 
-    checkPathForErrors();
-    checkModulesForErrors();
+        final SyncIssueHandler syncIssueHandler = extraModelInfo.getSyncIssueHandler();
 
-    PluginInitializer.initialize(project);
-    RecordingBuildListener buildListener = ProfilerInitializer.init(project, projectOptions);
-    ProfileAgent.INSTANCE.register(project.getName(), buildListener);
-    threadRecorder = ThreadRecorder.get();
+        SdkComponents sdkComponents =
+                SdkComponents.Companion.createSdkComponents(
+                        project,
+                        projectOptions,
+                        // We pass a supplier here because extension will only be set later.
+                        this::getExtension,
+                        getLogger(),
+                        syncIssueHandler);
 
-    Workers.INSTANCE.initFromProject(
-            projectOptions,
-            // possibly, in the future, consider using a pool with a dedicated size
-            // using the gradle parallelism settings.
-            ForkJoinPool.commonPool());
+        dataBindingBuilder = new DataBindingBuilder();
+        dataBindingBuilder.setPrintMachineReadableOutput(
+                SyncOptions.getErrorFormatMode(projectOptions) == ErrorFormatMode.MACHINE_PARSABLE);
 
-    ProcessProfileWriter.getProject(project.getPath())
-            .setAndroidPluginVersion(Version.ANDROID_GRADLE_PLUGIN_VERSION)
-            .setAndroidPlugin(getAnalyticsPluginType())
-            .setPluginGeneration(GradleBuildProject.PluginGeneration.FIRST)
-            .setOptions(AnalyticsUtil.toProto(projectOptions));
+        if (projectOptions.hasRemovedOptions()) {
+            syncIssueHandler.reportWarning(
+                    Type.GENERIC, projectOptions.getRemovedOptionsErrorMessage());
+        }
 
-    // 执行该分支
-    if (!projectOptions.get(BooleanOption.ENABLE_NEW_DSL_AND_API)) {
+        if (projectOptions.hasDeprecatedOptions()) {
+            extraModelInfo
+                    .getDeprecationReporter()
+                    .reportDeprecatedOptions(projectOptions.getDeprecatedOptions());
+        }
 
-    	//记录 configureProject 的路径和执行的时间点
-        threadRecorder.record(
-                ExecutionType.BASE_PLUGIN_PROJECT_CONFIGURE,
-                project.getPath(),
-                null,
-                this::configureProject);
+        if (!projectOptions.getExperimentalOptions().isEmpty()) {
+            projectOptions
+                    .getExperimentalOptions()
+                    .forEach(extraModelInfo.getDeprecationReporter()::reportExperimentalOption);
+        }
 
-        //记录 configureExtension 的路径和执行的时间点
-        threadRecorder.record(
-                ExecutionType.BASE_PLUGIN_PROJECT_BASE_EXTENSION_CREATION,
-                project.getPath(),
-                null,
-                this::configureExtension);
+        // Enforce minimum versions of certain plugins
+        GradlePluginUtils.enforceMinimumVersionsOfPlugins(project, syncIssueHandler);
 
-        //记录 createTasks 的路径和执行的时间点
-        threadRecorder.record(
-                ExecutionType.BASE_PLUGIN_PROJECT_TASKS_CREATION,
-                project.getPath(),
-                null,
-                this::createTasks);
-    } else {
         // Apply the Java plugin
         project.getPlugins().apply(JavaBasePlugin.class);
 
-        // create the delegate
-        ProjectWrapper projectWrapper = new ProjectWrapper(project);
-        PluginDelegate<E> delegate =
-                new PluginDelegate<>(
-                        project.getPath(),
-                        project.getObjects(),
-                        project.getExtensions(),
-                        project.getConfigurations(),
-                        projectWrapper,
-                        projectWrapper,
-                        project.getLogger(),
+        DslScopeImpl dslScope =
+                new DslScopeImpl(
+                        syncIssueHandler, extraModelInfo.getDeprecationReporter(), objectFactory);
+
+        @Nullable
+        FileCache buildCache = BuildCacheUtils.createBuildCacheIfEnabled(project, projectOptions);
+
+        globalScope =
+                new GlobalScope(
+                        project,
+                        creator,
+                        new ProjectWrapper(project),
                         projectOptions,
-                        getTypedDelegate());
+                        dslScope,
+                        sdkComponents,
+                        registry,
+                        buildCache,
+                        extraModelInfo.getMessageReceiver());
 
-        delegate.prepareForEvaluation();
+        project.getTasks()
+                .named("assemble")
+                .configure(
+                        task ->
+                                task.setDescription(
+                                        "Assembles all variants of all applications and secondary packages."));
 
-        // after evaluate callbacks
-        project.afterEvaluate(
-                CrashReporting.afterEvaluate(
-                        p -> {
-                            threadRecorder.record(
-                                    ExecutionType.BASE_PLUGIN_CREATE_ANDROID_TASKS,
-                                    p.getPath(),
-                                    null,
-                                    delegate::afterEvaluate);
-                        }));
-    }
-}
+        // 执行过程中回调
+        // call back on execution. This is called after the whole build is done (not
+        // after the current project is done).
+        // This is will be called for each (android) projects though, so this should support
+        // being called 2+ times.
+        gradle.addBuildListener(
+                new BuildListener() {
+                    @Override
+                    public void buildStarted(@NonNull Gradle gradle) {}
 
-//com.android.build.gradle.BasePlugin.kt
-private void configureProject() {
-    final Gradle gradle = project.getGradle();
-    ObjectFactory objectFactory = project.getObjects();
+                    @Override
+                    public void settingsEvaluated(@NonNull Settings settings) {}
 
-    extraModelInfo = new ExtraModelInfo(project.getPath(), projectOptions, project.getLogger());
+                    @Override
+                    public void projectsLoaded(@NonNull Gradle gradle) {}
 
-    final SyncIssueHandler syncIssueHandler = extraModelInfo.getSyncIssueHandler();
+                    @Override
+                    public void projectsEvaluated(@NonNull Gradle gradle) {}
 
-    SdkComponents sdkComponents =
-            SdkComponents.Companion.createSdkComponents(
-                    project,
-                    projectOptions,
-                    // We pass a supplier here because extension will only be set later.
-                    this::getExtension,
-                    getLogger(),
-                    syncIssueHandler);
-
-    dataBindingBuilder = new DataBindingBuilder();
-    dataBindingBuilder.setPrintMachineReadableOutput(
-            SyncOptions.getErrorFormatMode(projectOptions) == ErrorFormatMode.MACHINE_PARSABLE);
-
-    if (projectOptions.hasRemovedOptions()) {
-        syncIssueHandler.reportWarning(
-                Type.GENERIC, projectOptions.getRemovedOptionsErrorMessage());
-    }
-
-    if (projectOptions.hasDeprecatedOptions()) {
-        extraModelInfo
-                .getDeprecationReporter()
-                .reportDeprecatedOptions(projectOptions.getDeprecatedOptions());
-    }
-
-    if (!projectOptions.getExperimentalOptions().isEmpty()) {
-        projectOptions
-                .getExperimentalOptions()
-                .forEach(extraModelInfo.getDeprecationReporter()::reportExperimentalOption);
-    }
-
-    // Enforce minimum versions of certain plugins
-    GradlePluginUtils.enforceMinimumVersionsOfPlugins(project, syncIssueHandler);
-
-    // Apply the Java plugin
-    project.getPlugins().apply(JavaBasePlugin.class);
-
-    DslScopeImpl dslScope =
-            new DslScopeImpl(
-                    syncIssueHandler, extraModelInfo.getDeprecationReporter(), objectFactory);
-
-    @Nullable
-    FileCache buildCache = BuildCacheUtils.createBuildCacheIfEnabled(project, projectOptions);
-
-    globalScope =
-            new GlobalScope(
-                    project,
-                    creator,
-                    new ProjectWrapper(project),
-                    projectOptions,
-                    dslScope,
-                    sdkComponents,
-                    registry,
-                    buildCache,
-                    extraModelInfo.getMessageReceiver());
-
-    project.getTasks()
-            .named("assemble")
-            .configure(
-                    task ->
-                            task.setDescription(
-                                    "Assembles all variants of all applications and secondary packages."));
-
-    // 执行过程中回调
-    // call back on execution. This is called after the whole build is done (not
-    // after the current project is done).
-    // This is will be called for each (android) projects though, so this should support
-    // being called 2+ times.
-    gradle.addBuildListener(
-            new BuildListener() {
-                @Override
-                public void buildStarted(@NonNull Gradle gradle) {}
-
-                @Override
-                public void settingsEvaluated(@NonNull Settings settings) {}
-
-                @Override
-                public void projectsLoaded(@NonNull Gradle gradle) {}
-
-                @Override
-                public void projectsEvaluated(@NonNull Gradle gradle) {}
-
-                //构建完成时回调该方法，主要清除
-                @Override
-                public void buildFinished(@NonNull BuildResult buildResult) {
-                    // Do not run buildFinished for included project in composite build.
-                    if (buildResult.getGradle().getParent() != null) {
-                        return;
+                    //构建完成时回调该方法，主要清除
+                    @Override
+                    public void buildFinished(@NonNull BuildResult buildResult) {
+                        // Do not run buildFinished for included project in composite build.
+                        if (buildResult.getGradle().getParent() != null) {
+                            return;
+                        }
+                        ModelBuilder.clearCaches();
+                        Workers.INSTANCE.shutdown();
+                        sdkComponents.unload();
+                        SdkLocator.resetCache();
+                        threadRecorder.record(
+                                ExecutionType.BASE_PLUGIN_BUILD_FINISHED,
+                                project.getPath(),
+                                null,
+                                () -> {
+                                    if (!projectOptions.get(
+                                            BooleanOption.KEEP_SERVICES_BETWEEN_BUILDS)) {
+                                        WorkerActionServiceRegistry.INSTANCE
+                                                .shutdownAllRegisteredServices(
+                                                        ForkJoinPool.commonPool());
+                                    }
+                                    Main.clearInternTables();
+                                });
+                        DeprecationReporterImpl.Companion.clean();
                     }
-                    ModelBuilder.clearCaches();
-                    Workers.INSTANCE.shutdown();
-                    sdkComponents.unload();
-                    SdkLocator.resetCache();
-                    threadRecorder.record(
-                            ExecutionType.BASE_PLUGIN_BUILD_FINISHED,
-                            project.getPath(),
-                            null,
-                            () -> {
-                                if (!projectOptions.get(
-                                        BooleanOption.KEEP_SERVICES_BETWEEN_BUILDS)) {
-                                    WorkerActionServiceRegistry.INSTANCE
-                                            .shutdownAllRegisteredServices(
-                                                    ForkJoinPool.commonPool());
-                                }
-                                Main.clearInternTables();
-                            });
-                    DeprecationReporterImpl.Companion.clean();
-                }
-            });
+                });
 
-    createLintClasspathConfiguration(project);
+        createLintClasspathConfiguration(project);
+    }
 }
 
 //创建 Gradle Android 插件的扩展对象，创建 build.gradle 中配置的 buildtype，productflavor，signingConfig 容器，并设置回调。创建 taskManager(任务管理类)，VariantFactory（变体工厂），variantManager（变体管理类）
