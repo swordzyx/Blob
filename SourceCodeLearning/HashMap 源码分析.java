@@ -79,31 +79,36 @@ Node<K,V> newNode(int hash, K key, V value, Node<K,V> next) {
 final TreeNode<K,V> putTreeVal(HashMap<K,V> map, Node<K,V>[] tab, int h, K k, V v) {
     Class<?> kc = null;
     boolean searched = false;
+    //获取树的根节点
     TreeNode<K,V> root = (parent != null) ? root() : this;
+    //从根节点开始遍历，如果遍历到尾节点，依然没有找到 key 为 k，hash 为 h 的节点，则插入一个新的节点到末尾
     for (TreeNode<K,V> p = root;;) {
         int dir, ph; K pk;
+        //根节点的 hash 大于要插入的节点的 hash
         if ((ph = p.hash) > h)
             dir = -1;
         else if (ph < h)
             dir = 1;
+        //当前节点的 hash 等于要插入的节点的 hash，且 key 也相等，将当前节点作为原始节点返回
         else if ((pk = p.key) == k || (k != null && k.equals(pk)))
             return p;
-        else if ((kc == null &&
-                  (kc = comparableClassFor(k)) == null) ||
-                 (dir = compareComparables(kc, k, pk)) == 0) {
-            if (!searched) {
+        //如果 k 实现了 Comparable<C> 接口，comparableClassFor 则会返回它的 Class 实例
+        //如果 k 是 kc（class 对象）的对象，则 compareComparables 会将 k 和 pk 进行比较，如果 k 和 pk 相等，则进入以下分支
+        else if ((kc == null && (kc = comparableClassFor(k)) == null) || (dir = compareComparables(kc, k, pk)) == 0) {
+            if (!searched) {//search 为 false
                 TreeNode<K,V> q, ch;
                 searched = true;
-                if (((ch = p.left) != null &&
-                     (q = ch.find(h, k, kc)) != null) ||
-                    ((ch = p.right) != null &&
-                     (q = ch.find(h, k, kc)) != null))
+                //从当前节点出发，查找子节点中是否存在 key 为 k，hash 为 h ，key 的 class 类型为 kc 的子节点，如果找到了，说明要插入的节点在树中是存在的，直接返回原始节点
+                if (((ch = p.left) != null && (q = ch.find(h, k, kc)) != null) || ((ch = p.right) != null && (q = ch.find(h, k, kc)) != null))
                     return q;
             }
+            //走到这一步表示，要插入的子节点的 key 和当前节点的 key 相等，但它们的类是不可比较的。
+            //tieBreakOrder 则是比较 k 和 pk 的 hash，如果 k 的 hash 小于等于 pk，返回 -1，否则返回 1
             dir = tieBreakOrder(k, pk);
         }
 
         TreeNode<K,V> xp = p;
+        //dir 为 -1 ，则将 p 指向其左子节点，否则将其指向其右子节点
         if ((p = (dir <= 0) ? p.left : p.right) == null) {
             Node<K,V> xpn = xp.next;
             TreeNode<K,V> x = map.newTreeNode(h, k, v, xpn);
@@ -120,6 +125,54 @@ final TreeNode<K,V> putTreeVal(HashMap<K,V> map, Node<K,V>[] tab, int h, K k, V 
         }
     }
 }
+
+static final class TreeNode<K,V> extends LinkedHashMap.LinkedHashMapEntry<K,V> {
+    TreeNode<K,V> parent;  // red-black tree links
+    TreeNode<K,V> left;
+    TreeNode<K,V> right;
+    TreeNode<K,V> prev;    // needed to unlink next upon deletion
+    boolean red;
+
+    TreeNode(int hash, K key, V val, Node<K,V> next) {
+        super(hash, key, val, next);
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
