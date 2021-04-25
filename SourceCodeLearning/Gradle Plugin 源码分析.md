@@ -19,6 +19,7 @@
 从以上代码可看出 `com.android.application` 插件的实现类是 AppPlugin，它继承自 AbstractAppPlugin 类，AbstractAppPlugin 继承自 BasePlugin，最终 `com.android.application` 插件的入口是 BasePlugin 中的 apply 方法。所有的插件的入口都是 Plugin 的 apply 方法。
 
 //最终会调用 configureProject，configureExtension，createTasks 这三个函数
+```java
 BasePlugin.apply {
     //com.android.build.gradle.BasePlugin.kt
     @Override
@@ -63,7 +64,7 @@ BasePlugin.apply {
                 // using the gradle parallelism settings.
                 ForkJoinPool.commonPool());
 
-        //为 project 实例设置 Android Plugin Version，插件类型，插件生成器，project 等
+        //为 project 实例设置 Android Plugin Version，插件类型，插件生成器，project 路径等
         ProcessProfileWriter.getProject(project.getPath())
                 .setAndroidPluginVersion(Version.ANDROID_GRADLE_PLUGIN_VERSION)
                 .setAndroidPlugin(getAnalyticsPluginType())
@@ -125,8 +126,9 @@ BasePlugin.apply {
         }
     }
 }
+```
 
-
+```java
 configureProject {
     //com.android.build.gradle.BasePlugin.kt
     private void configureProject() {
@@ -252,6 +254,7 @@ configureProject {
         createLintClasspathConfiguration(project);
     }
 }
+```
 
 //创建 Gradle Android 插件的扩展对象，创建 build.gradle 中配置的 buildtype，productflavor，signingConfig 容器，并设置回调。创建 taskManager(任务管理类)，VariantFactory（变体工厂），variantManager（变体管理类）
 configureExtension {
