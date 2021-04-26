@@ -108,17 +108,18 @@ final TreeNode<K,V> putTreeVal(HashMap<K,V> map, Node<K,V>[] tab, int h, K k, V 
         }
 
         TreeNode<K,V> xp = p;
-        //dir 为 -1 ，则将 p 指向其左子节点，否则将其指向其右子节点
+        //dir 为 -1 ，则将 p 指向其左子节点，否则将其指向其右子节点，当遍历到了树的尾节点依然没有找到 k 和 h 对应的节点，说明这是一个新的节点，将该节点插到树的末尾
         if ((p = (dir <= 0) ? p.left : p.right) == null) {
             Node<K,V> xpn = xp.next;
+            //新建一个 TreeNode 节点
             TreeNode<K,V> x = map.newTreeNode(h, k, v, xpn);
-            if (dir <= 0)
+            if (dir <= 0)//dir 为 -1，将新节点添加到左子树，否则添加到右子树
                 xp.left = x;
             else
                 xp.right = x;
             xp.next = x;
             x.parent = x.prev = xp;
-            if (xpn != null)
+            if (xpn != null)//p.left p.right p.next 的区别是什么
                 ((TreeNode<K,V>)xpn).prev = x;
             moveRootToFront(tab, balanceInsertion(root, x));
             return null;
@@ -137,6 +138,86 @@ static final class TreeNode<K,V> extends LinkedHashMap.LinkedHashMapEntry<K,V> {
         super(hash, key, val, next);
     }
 }
+
+/**
+ * Ensures that the given root is the first node of its bin.
+ */
+static <K,V> void moveRootToFront(Node<K,V>[] tab, TreeNode<K,V> root) {
+    int n;
+    if (root != null && tab != null && (n = tab.length) > 0) {
+        int index = (n - 1) & root.hash;
+        TreeNode<K,V> first = (TreeNode<K,V>)tab[index];
+        if (root != first) {
+            Node<K,V> rn;
+            tab[index] = root;
+            TreeNode<K,V> rp = root.prev;
+            if ((rn = root.next) != null)
+                ((TreeNode<K,V>)rn).prev = rp;
+            if (rp != null)
+                rp.next = rn;
+            if (first != null)
+                first.prev = root;
+            root.next = first;
+            root.prev = null;
+        }
+        assert checkInvariants(root);
+    }
+}
+
+static <K,V> TreeNode<K,V> balanceInsertion(TreeNode<K,V> root, TreeNode<K,V> x) {
+    x.red = true;
+    for (TreeNode<K,V> xp, xpp, xppl, xppr;;) {
+        if ((xp = x.parent) == null) {
+            x.red = false;
+            return x;
+        }
+        else if (!xp.red || (xpp = xp.parent) == null)
+            return root;
+        if (xp == (xppl = xpp.left)) {
+            if ((xppr = xpp.right) != null && xppr.red) {
+                xppr.red = false;
+                xp.red = false;
+                xpp.red = true;
+                x = xpp;
+            }
+            else {
+                if (x == xp.right) {
+                    root = rotateLeft(root, x = xp);
+                    xpp = (xp = x.parent) == null ? null : xp.parent;
+                }
+                if (xp != null) {
+                    xp.red = false;
+                    if (xpp != null) {
+                        xpp.red = true;
+                        root = rotateRight(root, xpp);
+                    }
+                }
+            }
+        }
+        else {
+            if (xppl != null && xppl.red) {
+                xppl.red = false;
+                xp.red = false;
+                xpp.red = true;
+                x = xpp;
+            }
+            else {
+                if (x == xp.left) {
+                    root = rotateRight(root, x = xp);
+                    xpp = (xp = x.parent) == null ? null : xp.parent;
+                }
+                if (xp != null) {
+                    xp.red = false;
+                    if (xpp != null) {
+                        xpp.red = true;
+                        root = rotateLeft(root, xpp);
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 
 
