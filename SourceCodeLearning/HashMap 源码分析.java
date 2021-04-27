@@ -140,14 +140,14 @@ static final class TreeNode<K,V> extends LinkedHashMap.LinkedHashMapEntry<K,V> {
 }
 
 /**
- * Ensures that the given root is the first node of its bin.
+ * 
  */
 static <K,V> void moveRootToFront(Node<K,V>[] tab, TreeNode<K,V> root) {
     int n;
     if (root != null && tab != null && (n = tab.length) > 0) {
         int index = (n - 1) & root.hash;
         TreeNode<K,V> first = (TreeNode<K,V>)tab[index];
-        if (root != first) {
+        if (root != first) {//红黑树的根节点不是数组的第一个节点，则将红黑树的根节点移动到数组的第一个节点。
             Node<K,V> rn;
             tab[index] = root;
             TreeNode<K,V> rp = root.prev;
@@ -164,59 +164,108 @@ static <K,V> void moveRootToFront(Node<K,V>[] tab, TreeNode<K,V> root) {
     }
 }
 
+红黑树特性
+1. 节点是红色或者黑色
+2. 根节点是黑色
+3. 每个叶节点（NIL节点，空节点）是黑色
+4. 每个红色节点的两个子节点都是黑色。（从每个叶子到根的所有路径上不能有两个连续的红色节点）
+5. 从任一节点到其每个叶子的路径上包含的黑色节点数量都相同
+
+//x 是新插入的节点，也就是当前节点，每次往红黑树中添加一个新的节点，都要对树进行重新解构化，以保证该树始终维持红黑树的特性
+//root 表示当前根节点
 static <K,V> TreeNode<K,V> balanceInsertion(TreeNode<K,V> root, TreeNode<K,V> x) {
+    //将新插入的节点标记为红色
     x.red = true;
+    //xp 当前节点的父节点，xxp 爷爷节点 ，xppl 左叔叔节点，xppr 右叔叔节点
     for (TreeNode<K,V> xp, xpp, xppl, xppr;;) {
+        //x 的父节点为 null，说明新插入的节点就是根节点，红黑树的根节点必须为黑，因此将 x 标记为黑，然后作为根节点返回
         if ((xp = x.parent) == null) {
             x.red = false;
             return x;
         }
+        //父节点不为 null
+        //如果父节点是黑节点，或者父节点是红色，但爷爷节点（父节点的父节点）为 null（这不就变成了父节点就是根节点，而且根节点为红色）
         else if (!xp.red || (xpp = xp.parent) == null)
             return root;
+
+        //如果父节点是爷爷节点的左孩子，父节点是黑色
         if (xp == (xppl = xpp.left)) {
+            //父节点右边的兄弟不为空，而且它是红色
             if ((xppr = xpp.right) != null && xppr.red) {
-                xppr.red = false;
-                xp.red = false;
-                xpp.red = true;
-                x = xpp;
+                xppr.red = false;//右叔叔变成黑色
+                xp.red = false;//父节点编程黑色
+                xpp.red = true;//爷爷节点编程红色
+                x = xpp;//将当前节点指向爷爷节点，开启下一轮循环
             }
-            else {
-                if (x == xp.right) {
-                    root = rotateLeft(root, x = xp);
-                    xpp = (xp = x.parent) == null ? null : xp.parent;
+            else {//父节点是爷爷的左孩子，但是它没有右兄弟
+                if (x == xp.right) {//当前节点是父节点的右孩子
+                    root = rotateLeft(root, x = xp);//父节点左旋
+                    xpp = (xp = x.parent) == null ? null : xp.parent;//获取父节点左旋之后的爷爷节点
                 }
-                if (xp != null) {
-                    xp.red = false;
-                    if (xpp != null) {
+                if (xp != null) {//如果父节点不为 null
+                    xp.red = false;//将父节点变为黑色
+                    if (xpp != null) {//如果爷爷节点不为 null，把爷爷节点变为红色，然后将爷爷节点右旋
                         xpp.red = true;
                         root = rotateRight(root, xpp);
                     }
                 }
             }
         }
+        //父节点是爷爷的右孩子，父节点是黑色
         else {
+            //父节点的左兄弟不为 null，而且是红色
             if (xppl != null && xppl.red) {
-                xppl.red = false;
-                xp.red = false;
-                xpp.red = true;
-                x = xpp;
+                xppl.red = false;//将左叔叔置为黑色
+                xp.red = false;//将父节点变为黑色
+                xpp.red = true;//把爷爷节点变为红色
+                x = xpp;//将当前节点指向爷爷节点，进行下一轮循环。所以这个是从叶子节点开始遍历的？
             }
-            else {
-                if (x == xp.left) {
-                    root = rotateRight(root, x = xp);
-                    xpp = (xp = x.parent) == null ? null : xp.parent;
+            else {//父节点左边没有兄弟
+                if (x == xp.left) {//当前节点是父节点的左孩子
+                    root = rotateRight(root, x = xp);//右旋
+                    xpp = (xp = x.parent) == null ? null : xp.parent;//获取爷爷节点
                 }
-                if (xp != null) {
-                    xp.red = false;
-                    if (xpp != null) {
+                if (xp != null) {//父节点右旋之后，如果新的父节点不为 null
+                    xp.red = false;//将父节点变为黑色
+                    if (xpp != null) {//如果爷爷节点不为 null ，把爷爷节点变为红色
                         xpp.red = true;
-                        root = rotateLeft(root, xpp);
+                        root = rotateLeft(root, xpp);//爷爷节点左旋。
                     }
                 }
             }
         }
     }
 }
+
+
+//红黑树节点左旋，其实就是让 p 的右孩子代替 p 的位置，
+//p 爸爸变成了它的右孩子的爸爸
+//p 的右孙子（左）变成 p 的右孩子
+//p 的右孩子变成了 p 的爸爸，p 是左孩子
+/**
+* root：根节点
+* p：要左旋的节点
+*/
+static <K,V> TreeNode<K,V> rotateLeft(TreeNode<K,V> root, TreeNode<K,V> p) {
+    TreeNode<K,V> r, pp, rl;
+    //左旋节点不为 null，左旋节点的右孩子也不为 null
+    if (p != null && (r = p.right) != null) {
+        //将 p 的右孙子（左）变成 p 的右孩子，此时 r.parent 还是指向 p 的，也就是要左旋的节点
+        if ((rl = p.right = r.left) != null)
+            rl.parent = p;
+        //如果左旋节点的父节点为 null，表示左旋节点就是根节点，而 r（原始右孩子）的父节点变为 null，即 r 变成了根节点
+        if ((pp = r.parent = p.parent) == null)
+            (root = r).red = false;//把 r 变成黑色
+        else if (pp.left == p)//如果 p 是它爸爸的左孩子，就让 r 代替 p 的位置，变成 p 爸的左孩子。不过此时 p 的 parent 还是指向 p 爸的
+            pp.left = r;
+        else
+            pp.right = r;
+        r.left = p;//左旋节点的原始右孩子变成左旋节点的父节点
+        p.parent = r;//把 r 变成 p 的爸爸
+    }
+    return root;
+}
+
 
 
 
