@@ -20,6 +20,7 @@
 
 //最终会调用 configureProject，configureExtension，createTasks 这三个函数
 ```java
+//3.4.2
 BasePlugin.apply {
     //com.android.build.gradle.BasePlugin.kt
     @Override
@@ -129,16 +130,32 @@ BasePlugin.apply {
 ```
 
 ```java
+/**
+* 1. 获取 Gradle 实例
+* 2. 获取 ObjectFactory 实例
+* 3. 创建 DataBindingBuilder 实例
+* 4. 检查 Gradle 插件版本，不能小于指定的最小版本
+* 5. 应用 Java 插件
+* 6. 如果启用了构建缓存，则创建 buildCache 实例
+* 7. 给 Project 设置一个监听，在 Project 的整个构建过程完成之后进行资源的回收以及缓存的清除（buildFinished）
+*/
+//4.0.1
 configureProject {
     //com.android.build.gradle.BasePlugin.kt
     private void configureProject() {
         //获取 Gradle 实例，表示对 Gradle 的调用
         final Gradle gradle = project.getGradle();
+        //获取 Project 的 ObjectFactcory 实例，可用此实例创建各种类型的 model objects
         ObjectFactory objectFactory = project.getObjects();
+        final Logger logger = project.getLogger();
+        final String projectPath = project.getPath();
 
-        extraModelInfo = new ExtraModelInfo(project.getPath(), projectOptions, project.getLogger());
+        syncIssueHandler = new SyncIssueReporterImpl(SyncOptions.getModelQueryMode(projectOptions), logger);
 
-        final SyncIssueHandler syncIssueHandler = extraModelInfo.getSyncIssueHandler();
+        DeprecationReporterImpl deprecationReporter = new DeprecationReporterImpl(syncIssueHandler, projectOptions, projectPath);
+
+        //For storing additional model information.
+        extraModelInfo = new ExtraModelInfo();
 
         SdkComponents sdkComponents =
                 SdkComponents.Companion.createSdkComponents(
@@ -149,38 +166,31 @@ configureProject {
                         getLogger(),
                         syncIssueHandler);
 
+        //创建 DataBindingBuilder 实例
         dataBindingBuilder = new DataBindingBuilder();
-        dataBindingBuilder.setPrintMachineReadableOutput(
-                SyncOptions.getErrorFormatMode(projectOptions) == ErrorFormatMode.MACHINE_PARSABLE);
+        dataBindingBuilder.setPrintMachineReadableOutput(SyncOptions.getErrorFormatMode(projectOptions) == ErrorFormatMode.MACHINE_PARSABLE);
 
-        if (projectOptions.hasRemovedOptions()) {
-            syncIssueHandler.reportWarning(
-                    Type.GENERIC, projectOptions.getRemovedOptionsErrorMessage());
-        }
+        projectOptions.getAllOptions().forEach(deprecationReporter::reportOptionIssuesIfAny);
 
-
-        if (projectOptions.hasDeprecatedOptions()) {
-            extraModelInfo
-                    .getDeprecationReporter()
-                    .reportDeprecatedOptions(projectOptions.getDeprecatedOptions());
-        }
-
-        if (!projectOptions.getExperimentalOptions().isEmpty()) {
-            projectOptions
-                    .getExperimentalOptions()
-                    .forEach(extraModelInfo.getDeprecationReporter()::reportExperimentalOption);
-        }
-
-        // Enforce minimum versions of certain plugins
+        //检查当前的 Gradle 插件是否小于所支持的最小插件版本，如果是则抛出异常
         GradlePluginUtils.enforceMinimumVersionsOfPlugins(project, syncIssueHandler);
 
-        // Apply the Java plugin
+        //应用 Java 插件
         project.getPlugins().apply(JavaBasePlugin.class);
 
         DslScopeImpl dslScope =
                 new DslScopeImpl(
-                        syncIssueHandler, extraModelInfo.getDeprecationReporter(), objectFactory);
+                        syncIssueHandler,
+                        deprecationReporter,
+                        objectFactory,
+                        project.getLogger(),
+                        new BuildFeatureValuesImpl(projectOptions),
+                        project.getProviders(),
+                        new DslVariableFactory(syncIssueHandler),
+                        project.getLayout(),
+                        project::file);
 
+        //如果启用了构建缓存，则会创建 buildCache 实例以便后面能重用缓存。
         @Nullable
         FileCache buildCache = BuildCacheUtils.createBuildCacheIfEnabled(project, projectOptions);
 
@@ -188,41 +198,21 @@ configureProject {
                 new GlobalScope(
                         project,
                         creator,
-                        new ProjectWrapper(project),
                         projectOptions,
                         dslScope,
                         sdkComponents,
                         registry,
                         buildCache,
-                        extraModelInfo.getMessageReceiver());
+                        messageReceiver,
+                        componentFactory);
 
         project.getTasks()
                 .named("assemble")
-                .configure(
-                        task ->
-                                task.setDescription(
-                                        "Assembles all variants of all applications and secondary packages."));
+                .configure(task -> task.setDescription("Assembles all variants of all applications and secondary packages."));
 
-        // 执行过程中回调
-        // call back on execution. This is called after the whole build is done (not
-        // after the current project is done).
-        // This is will be called for each (android) projects though, so this should support
-        // being called 2+ times.
+        // buildFinished 函数会整个 Project 构建完成后回调，主要执行资源的回收，清除缓存等操作。
         gradle.addBuildListener(
-                new BuildListener() {
-                    @Override
-                    public void buildStarted(@NonNull Gradle gradle) {}
-
-                    @Override
-                    public void settingsEvaluated(@NonNull Settings settings) {}
-
-                    @Override
-                    public void projectsLoaded(@NonNull Gradle gradle) {}
-
-                    @Override
-                    public void projectsEvaluated(@NonNull Gradle gradle) {}
-
-                    //构建完成时回调该方法，主要清除
+                new BuildAdapter() {
                     @Override
                     public void buildFinished(@NonNull BuildResult buildResult) {
                         // Do not run buildFinished for included project in composite build.
@@ -230,24 +220,11 @@ configureProject {
                             return;
                         }
                         ModelBuilder.clearCaches();
-                        Workers.INSTANCE.shutdown();
                         sdkComponents.unload();
                         SdkLocator.resetCache();
-                        threadRecorder.record(
-                                ExecutionType.BASE_PLUGIN_BUILD_FINISHED,
-                                project.getPath(),
-                                null,
-                                () -> {
-                                    if (!projectOptions.get(
-                                            BooleanOption.KEEP_SERVICES_BETWEEN_BUILDS)) {
-                                        WorkerActionServiceRegistry.INSTANCE
-                                                .shutdownAllRegisteredServices(
-                                                        ForkJoinPool.commonPool());
-                                    }
-                                    Main.clearInternTables();
-                                });
+                        ConstraintHandler.clearCache();
+                        threadRecorder.record(ExecutionType.BASE_PLUGIN_BUILD_FINISHED, projectPath, null, Main::clearInternTables);
                         DeprecationReporterImpl.Companion.clean();
-
                     }
                 });
 
@@ -256,164 +233,124 @@ configureProject {
 }
 ```
 
-//创建 Gradle Android 插件的扩展对象，创建 build.gradle 中配置的 buildtype，productflavor，signingConfig 容器，并设置回调。创建 taskManager(任务管理类)，VariantFactory（变体工厂），variantManager（变体管理类）
+```java
+//4.0.1
+
 configureExtension {
     //com\android\build\gradle\BasePlugin.java
 	//配置扩展
 	private void configureExtension() {
 	    ObjectFactory objectFactory = project.getObjects();
-        //首先创建 4 个对象的容器，保存 build.gradle 中 android{..} 配置的属性
+        
+        //首先创建盛放 buildType、productFlavor、signingConfig 的容器，保存 build.gradle 中 android{..} 配置的属性
 	    //创建 BuildType 类型的 Container，也就是 debug 或者 release
-	    final NamedDomainObjectContainer<BuildType> buildTypeContainer =
-	            project.container(
-	                    BuildType.class,
-	                    new BuildTypeFactory(
-	                            objectFactory,
-	                            project,
-	                            extraModelInfo.getSyncIssueHandler(),
-	                            extraModelInfo.getDeprecationReporter()));
+	    final NamedDomainObjectContainer<BuildType> buildTypeContainer = project.container(BuildType.class, new BuildTypeFactory(dslScope));
+
 	    //创建 ProductFlavor 的 Container
-	    final NamedDomainObjectContainer<ProductFlavor> productFlavorContainer =
-	            project.container(
-	                    ProductFlavor.class,
-	                    new ProductFlavorFactory(
-	                            objectFactory,
-	                            project,
-	                            extraModelInfo.getDeprecationReporter(),
-	                            project.getLogger()));
+	    final NamedDomainObjectContainer<ProductFlavor> productFlavorContainer = project.container(ProductFlavor.class, new ProductFlavorFactory(dslScope));
+
 	    //创建 SigningConfig 的 Container ，即签名配置。
 	    final NamedDomainObjectContainer<SigningConfig> signingConfigContainer =
-	            project.container(
-	                    SigningConfig.class,
-	                    new SigningConfigFactory(
-	                            objectFactory,
-	                            GradleKeystoreHelper.getDefaultDebugKeystoreLocation()));
+                project.container(
+                        SigningConfig.class,
+                        new SigningConfigFactory(dslScope.getObjectFactory(), GradleKeystoreHelper.getDefaultDebugKeystoreLocation()));
 
-	    //配置构建输出的 Container
-	    final NamedDomainObjectContainer<BaseVariantOutput> buildOutputs =
-	            project.container(BaseVariantOutput.class);
+	    //创建一个容器，用于管理 BaseVariantOutput 类型的对象
+	    final NamedDomainObjectContainer<BaseVariantOutput> buildOutputs = project.container(BaseVariantOutput.class);
 
+        //创建一个 “buildOutputs” 扩展属性配置
 	    project.getExtensions().add("buildOutputs", buildOutputs);
 
-	    sourceSetManager = new SourceSetManager(
-			                    project,
-			                    isPackagePublished(),
-			                    globalScope.getDslScope(),
-			                    new DelayedActionsExecutor());
-	    //createExtension 的实现位于 AbstractAppPlugin 中
-	    extension = createExtension(
-	                    project,
-	                    projectOptions,
-	                    globalScope,
-	                    buildTypeContainer,
-	                    productFlavorContainer,
-	                    signingConfigContainer,
-	                    buildOutputs,
-	                    sourceSetManager,
-	                    extraModelInfo);
+	    sourceSetManager = new SourceSetManager(project, isPackagePublished(), dslScope, new DelayedActionsExecutor());
 
+	    //创建一个名为 “android” 的扩展，其实就是读取 build.gradle 中 android{...} 下的配置，然后保存到 BaseAppModuleExtension 这个类的对象中，这个扩展对应的实现类就是 BaseAppModuleExtension
+	    extension = createExtension(
+                    dslScope,
+                    projectOptions,
+                    globalScope,
+                    buildTypeContainer,
+                    defaultConfig,
+                    productFlavorContainer,
+                    signingConfigContainer,
+                    buildOutputs,
+                    sourceSetManager,
+                    extraModelInfo);
+
+
+        //dslScope 是一个包含了 Android Plugin 所需要的数据的 Scope，将 android 扩展中的 buildFeature 连接到 DslScope 的 BuildFeatureValues 中
+        ((BuildFeatureValuesImpl) dslScope.getBuildFeatures()).setDslBuildFeatures(((CommonExtension) extension).getBuildFeatures());
+
+        //设置扩展
 	    globalScope.setExtension(extension);
 
-	    //createVariantFactory 的实现位于 ApplicationVariantFactory 和 LibraryVariantFactory 中
-	    //VariantFactory 是构建变体的工厂类，主要生成 Variant 对象。
-	    variantFactory = createVariantFactory(globalScope, extension);
+	    //实现位于 AppPlugin 中，创建 ApplciationVariantFactory 实例，代表了一个 app project，通过此类生成 apk 文件
+	    variantFactory = createVariantFactory(globalScope);
 
-	    //createTaskManager 是抽象方法，再 AppPlugin 和 LibraryPlugin 中均有实现。
-	    //TaskManager 是具体的任务管理类，构建 app 和构建 library 所需的构建任务是不同的
+	    //createTaskManager 的具体实现类位于 AbstractAppPlugin.java 中，用于创建 Task
 	    taskManager = createTaskManager(
-	                    globalScope,
-	                    project,
-	                    projectOptions,
-	                    dataBindingBuilder,
-	                    extension,
-	                    variantFactory,
-	                    registry,
-	                    threadRecorder);
-	    //变体管理类。
+                        globalScope,
+                        project,
+                        projectOptions,
+                        dataBindingBuilder,
+                        extension,
+                        variantFactory,
+                        registry,
+                        threadRecorder);
+
+        //VariantInputModel，由 DSL/API 执行时填充
+        variantInputModel = new VariantInputModelImpl(globalScope, extension, variantFactory, sourceSetManager);
+
+	    //变体管理类。用于创建或管理构建变体
 	    variantManager = new VariantManager(
-	                    globalScope,
-	                    project,
-	                    projectOptions,
-	                    extension,
-	                    variantFactory,
-	                    taskManager,
-	                    sourceSetManager,
-	                    threadRecorder);
+                globalScope,
+                project,
+                projectOptions,
+                extension,
+                variantFactory,
+                variantInputModel,
+                taskManager,
+                sourceSetManager,
+                threadRecorder);
 
-	    registerModels(registry, globalScope, variantManager, extension, extraModelInfo);
+	    registerModels(registry, globalScope, variantInputModel, variantManager, extension, extraModelInfo);
 
-	    // map the whenObjectAdded callbacks on the containers.
+	    // 有新的 SigningConfig 对象添加到 signingConfigContainer 时，回调 variantManager.addSigningConfig 方法。
 	    signingConfigContainer.whenObjectAdded(variantManager::addSigningConfig);
 
+        //当有新的 BuildType 对象添加到 buildTypeContainer 时，通过 init 初始化之后，将其添加到 variantInputModel 中。
 	    buildTypeContainer.whenObjectAdded(
-	            buildType -> {
-	                if (!this.getClass().isAssignableFrom(DynamicFeaturePlugin.class)) {
-	                    SigningConfig signingConfig = signingConfigContainer.findByName(BuilderConstants.DEBUG);
-	                    buildType.init(signingConfig);
-	                } else {
-	                    // initialize it without the signingConfig for dynamic-features.
-	                    buildType.init();
-	                }
-	                variantManager.addBuildType(buildType);
-	            });
+                buildType -> {
+                    if (!this.getClass().isAssignableFrom(DynamicFeaturePlugin.class)) {
+                        SigningConfig signingConfig = signingConfigContainer.findByName(BuilderConstants.DEBUG);
+                        buildType.init(signingConfig);
+                    } else {
+                        // initialize it without the signingConfig for dynamic-features.
+                        buildType.init();
+                    }
+                    variantInputModel.addBuildType(buildType);
+                });
 
+        //有新的 ProductFlavor 对象添加到 productFlavorContainer 时，回调 variantManager.addProductFlavor 方法
 	    productFlavorContainer.whenObjectAdded(variantManager::addProductFlavor);
 
 	    // map whenObjectRemoved on the containers to throw an exception.
-	    signingConfigContainer.whenObjectRemoved(
-	            new UnsupportedAction("Removing signingConfigs is not supported."));
-	    buildTypeContainer.whenObjectRemoved(
-	            new UnsupportedAction("Removing build types is not supported."));
-	    productFlavorContainer.whenObjectRemoved(
-	            new UnsupportedAction("Removing product flavors is not supported."));
+	    signingConfigContainer.whenObjectRemoved(new UnsupportedAction("Removing signingConfigs is not supported."));
+	    buildTypeContainer.whenObjectRemoved(new UnsupportedAction("Removing build types is not supported."));
+	    productFlavorContainer.whenObjectRemoved(new UnsupportedAction("Removing product flavors is not supported."));
 
-	    //创建默认配置，这里以构建 APP 为例，因此会调用 ApplicationVariantFactory 中该方法
+        //首先创建一个 debug 签名和 debug 构建类型的配置
+	    //创建默认的配置，增加 DEBUG 类型的 SigningConfig 对象，增加 DEBUG 和 RELEASE 类型的构建类型，对应 Debug 构建和 Release 构建
 	    variantFactory.createDefaultComponents(buildTypeContainer, productFlavorContainer, signingConfigContainer);
+
+
+        //为测试 apk 创建特殊的配置，确保在运行测试之前已经安装好了要测试的 apk
+        createAndroidTestUtilConfiguration();
 	}
-
-
-	@NonNull
-    @Override
-    protected BaseExtension createExtension(
-            @NonNull Project project,
-            @NonNull ProjectOptions projectOptions,
-            @NonNull GlobalScope globalScope,
-            @NonNull NamedDomainObjectContainer<BuildType> buildTypeContainer,
-            @NonNull NamedDomainObjectContainer<ProductFlavor> productFlavorContainer,
-            @NonNull NamedDomainObjectContainer<SigningConfig> signingConfigContainer,
-            @NonNull NamedDomainObjectContainer<BaseVariantOutput> buildOutputs,
-            @NonNull SourceSetManager sourceSetManager,
-            @NonNull ExtraModelInfo extraModelInfo) {
-    	//创建名称为 android 的扩展
-        return project.getExtensions()
-                .create("android",
-                        getExtensionClass(),
-                        project,
-                        projectOptions,
-                        globalScope,
-                        buildTypeContainer,
-                        productFlavorContainer,
-                        signingConfigContainer,
-                        buildOutputs,
-                        sourceSetManager,
-                        extraModelInfo,
-                        isBaseApplication);
-    }
-
-
-    @Override
-    public void createDefaultComponents(
-            @NonNull NamedDomainObjectContainer<BuildType> buildTypes,
-            @NonNull NamedDomainObjectContainer<ProductFlavor> productFlavors,
-            @NonNull NamedDomainObjectContainer<SigningConfig> signingConfigs) {
-        // must create signing config first so that build type 'debug' can be initialized
-        // with the debug signing config.
-        signingConfigs.create(DEBUG);
-        buildTypes.create(DEBUG);
-        buildTypes.create(RELEASE);
-    } 
 }
+```
 
+```java
+//4.0.1
 //创建构建变体及其所需的任务
 createTasks {
     //BasePlugin.java
@@ -947,7 +884,7 @@ createTasks {
         return variantApi;
     }
 }
-
+```
 
 //调用 D8.run(builder.build(), MoreExecutors.newDirectExecutorService())，生成 Dex 文件
 Dex 编译过程 {
