@@ -267,6 +267,104 @@ static <K,V> TreeNode<K,V> rotateLeft(TreeNode<K,V> root, TreeNode<K,V> p) {
 }
 
 
+/*
+* p：要右旋的节点
+* root：树的根节点
+* p 是爸爸，l是左儿子，
+* p 从爸爸变成了 l 的右儿子。l 从左儿子变成了爸爸，变成了它爷爷的右儿子
+*/
+static <K,V> TreeNode<K,V> rotateRight(TreeNode<K,V> root, TreeNode<K,V> p) {
+    TreeNode<K,V> l, pp, lr;
+    if (p != null && (l = p.left) != null) {//p 不为 null，且 p 有一个左孩子
+        if ((lr = p.left = l.right) != null)//把 p 的左孙子（右）变成 p 的孩子。如果有的话
+            lr.parent = p;
+        if ((pp = l.parent = p.parent) == null)//把左孩子的爷爷变成他的爸爸，如果做孩子没有爷爷，则将左孩子变成黑色的根节点
+            (root = l).red = false;
+        else if (pp.right == p)//如果 p 是它爸的右孩子，直接让左孩子顶替 P 的位置，变成它爷爷的右孩子
+            pp.right = l;
+        else
+            pp.left = l;
+        l.right = p;//p 变成左孩子的右孩子。也就是 p 从爸爸变成了右儿子。
+        p.parent = l;
+    }
+    return root;
+}
+
+
+get {
+    //获取指定 key 映射的 value
+    public V get(Object key) {
+        Node<K,V> e;
+        return (e = getNode(hash(key), key)) == null ? null : e.value;
+    }
+
+
+    final Node<K,V> getNode(int hash, Object key) {
+        Node<K,V>[] tab; Node<K,V> first, e; int n; K k;
+        //检查 Map 里面数组是否为 null，不为 null 找到对应 key 所在的索引
+        if ((tab = table) != null && (n = tab.length) > 0 && (first = tab[(n - 1) & hash]) != null) {
+            //找到数组对应的索引后，首先判断索引所在的链表/树的第一个元素是否为要找的元素
+            if (first.hash == hash &&((k = first.key) == key || (key != null && key.equals(k))))
+                return first;
+            //查找数组中的下一个元素
+            if ((e = first.next) != null) {
+                if (first instanceof TreeNode)//如果数组索引处是一个红黑树，则执行查找红黑树节点的逻辑，此时 first 为根节点
+                    return ((TreeNode<K,V>)first).getTreeNode(hash, key);
+                do {//遍历从链表中查找节点
+                    if (e.hash == hash && ((k = e.key) == key || (key != null && key.equals(k))))
+                        return e;
+                } while ((e = e.next) != null);
+            }
+        }
+        return null;
+    }
+
+    //从根节点查找
+    final TreeNode<K,V> getTreeNode(int h, Object k) {
+        return ((parent != null) ? root() : this).find(h, k, null);
+    }
+
+    /**
+     * Finds the node starting at root p with the given hash and key.
+     * The kc argument caches comparableClassFor(key) upon first use
+     * comparing keys.
+     */
+    final TreeNode<K,V> find(int h, Object k, Class<?> kc) {
+        TreeNode<K,V> p = this;
+        //遍历整个红黑树
+        do {
+            int ph, dir; K pk;
+            TreeNode<K,V> pl = p.left, pr = p.right, q;
+            //hash 较大的在左边，较小的在右边，有点像二分查找
+            if ((ph = p.hash) > h)
+                p = pl;
+            else if (ph < h)
+                p = pr;
+            //找到 key 对应的节点，直接返回
+            else if ((pk = p.key) == k || (k != null && k.equals(pk)))
+                return p;
+            else if (pl == null)//hash 相等，但是 key 不相等。左边没有节点了，则查找右边
+                p = pr;
+            else if (pr == null)
+                p = pl;
+            //key 是一个可比较的对象对比 key
+            //如果 k 的类型是可比较的，则comparableClassFor 会返回 k 的 class 实例，否则返回 null，保存在 kc 中
+            //拿到了 k 的类的实例之后，比较要查找的 key 的与当前遍历所到达的节点的 key 是否相等
+            //如果 compareComparables 返回的值小于零，说明 k 是大于 pk ，继续查找右子树 
+            else if ((kc != null || (kc = comparableClassFor(k)) != null) && (dir = compareComparables(kc, k, pk)) != 0)
+                p = (dir < 0) ? pl : pr;
+            //如果上一步 compareComparables 返回零，说明当前遍历到的节点的类型与 k 的类型是一样的，那么以当前节点为根节点，递归的查找，因为 kc 更新了，需要使用新的 kc 继续查找。不过直接把 kc 赋值给一个变量，递归查找不行吗？
+            else if ((q = pr.find(h, k, kc)) != null)
+                return q;
+            else
+                p = pl;
+        } while (p != null);
+        return null;
+    }
+
+
+}
+
 
 
 
