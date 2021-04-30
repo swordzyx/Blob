@@ -362,7 +362,7 @@ createTasks {
                 null,
                 () -> taskManager.createTasksBeforeEvaluate());
 
-        //项目评估完成之后开始创建 Android 任务
+        //project 评估阶段完成之后创建 Android Task
         project.afterEvaluate(
                 CrashReporting.afterEvaluate(
                         p -> {
@@ -375,6 +375,88 @@ createTasks {
                                     this::createAndroidTasks);
                         }));
     }
+
+
+
+    /**
+     * 在评估之前创建任务（适用于插件），注册了以下任务
+     * uninstallAllTask
+     * deviceCheckTask
+     * connectedCheckTask
+     * perbuild
+     * ExtractProguardFiles
+     * SourceSetsTask
+     * assembleAndroidTestTask
+     * LintCompile
+     * LintGlobalTask：该任务执行完毕之后执行 Task 的检查
+     * LintFixTask
+     * 
+     */
+    public void createTasksBeforeEvaluate() {
+        //卸载所有的 Task
+        taskFactory.register(
+                UNINSTALL_ALL,
+                uninstallAllTask -> {
+                    uninstallAllTask.setDescription("Uninstall all applications.");
+                    uninstallAllTask.setGroup(INSTALL_GROUP);
+                });
+
+        //设备检查
+        taskFactory.register(
+                DEVICE_CHECK,
+                deviceCheckTask -> {
+                    deviceCheckTask.setDescription(
+                            "Runs all device checks using Device Providers and Test Servers.");
+                    deviceCheckTask.setGroup(JavaBasePlugin.VERIFICATION_GROUP);
+                });
+
+        //检查已连接的设备
+        taskFactory.register(
+                CONNECTED_CHECK,
+                connectedCheckTask -> {
+                    connectedCheckTask.setDescription("Runs all device checks on currently connected devices.");
+                    connectedCheckTask.setGroup(JavaBasePlugin.VERIFICATION_GROUP);
+                });
+
+        // Make sure MAIN_PREBUILD runs first:
+        taskFactory.register(MAIN_PREBUILD);
+
+        taskFactory.register(EXTRACT_PROGUARD_FILES,  ExtractProguardFiles.class, task -> task.dependsOn(MAIN_PREBUILD));
+
+        taskFactory.register(new SourceSetsTask.CreationAction(extension));
+
+        taskFactory.register(
+                ASSEMBLE_ANDROID_TEST,
+                assembleAndroidTestTask -> {
+                    assembleAndroidTestTask.setGroup(BasePlugin.BUILD_GROUP);
+                    assembleAndroidTestTask.setDescription("Assembles all the Test applications.");
+                });
+
+        taskFactory.register(new LintCompile.CreationAction(globalScope));
+
+        // Lint task is configured in afterEvaluate, but created upfront as it is used as an
+        // anchor task.
+        createGlobalLintTask();
+        configureCustomLintChecksConfig();
+
+        globalScope.setAndroidJarConfig(createAndroidJarConfig(project));
+
+        if (buildCache != null) {
+            taskFactory.register(new CleanBuildCache.CreationAction(buildCache));
+        }
+
+        // for testing only.
+        taskFactory.register("resolveConfigAttr", ConfigAttrTask.class, task -> task.resolvable = true);
+        taskFactory.register("consumeConfigAttr", ConfigAttrTask.class, task -> task.consumable = true);
+
+        // This needs to be resolved before tasks evaluation since it does some configuration inside
+        // By resolving it here we avoid configuration problems. The value returned will be cached
+        // and returned immediately later when this method is invoked.
+        Aapt2MavenUtils.getAapt2FromMavenAndVersion(globalScope);
+
+        createCoreLibraryDesugaringConfig(project);
+    }
+
 
 
     @VisibleForTesting
