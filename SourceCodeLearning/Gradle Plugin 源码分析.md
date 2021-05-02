@@ -356,6 +356,7 @@ createTasks {
     //BasePlugin.java
     private void createTasks() {
         //记录 taskManager.createTasksBeforeEvaluate 执行所消耗的时间。并记录结果
+        //createTasksBeforeEvaluate 在 project 评估之前执行
         threadRecorder.record(
                 ExecutionType.TASK_MANAGER_CREATE_TASKS,
                 project.getPath(),
@@ -379,6 +380,8 @@ createTasks {
 
 
     /**
+     * TaskManager.java
+     * 
      * 在评估之前创建任务（适用于插件），注册了以下任务
      * uninstallAllTask
      * deviceCheckTask
@@ -390,7 +393,15 @@ createTasks {
      * LintCompile
      * LintGlobalTask：该任务执行完毕之后执行 Task 的检查
      * LintFixTask
+     * buildCache
+     * ConfigAttrTask：仅用于测试
      * 
+     * 
+     * 创建配置：
+     * CustomLintChecksConfig
+     * CustomLintPublishConfig
+     * androidJarConfig：Configuration 对象
+     * CoreLibraryDesugaringConfig
      */
     public void createTasksBeforeEvaluate() {
         //卸载所有的 Task
@@ -434,13 +445,13 @@ createTasks {
 
         taskFactory.register(new LintCompile.CreationAction(globalScope));
 
-        // Lint task is configured in afterEvaluate, but created upfront as it is used as an
-        // anchor task.
+        // Lint task is configured in afterEvaluate, but created upfront as it is used as an anchor task.
         createGlobalLintTask();
         configureCustomLintChecksConfig();
 
         globalScope.setAndroidJarConfig(createAndroidJarConfig(project));
 
+        //清除构建缓存
         if (buildCache != null) {
             taskFactory.register(new CleanBuildCache.CreationAction(buildCache));
         }
@@ -452,6 +463,7 @@ createTasks {
         // This needs to be resolved before tasks evaluation since it does some configuration inside
         // By resolving it here we avoid configuration problems. The value returned will be cached
         // and returned immediately later when this method is invoked.
+        //getAapt2FromMavenAndVersion 返回一个文件列表，包含了要使用的 AAPT2 目录以及版本号
         Aapt2MavenUtils.getAapt2FromMavenAndVersion(globalScope);
 
         createCoreLibraryDesugaringConfig(project);
@@ -461,18 +473,39 @@ createTasks {
 
     @VisibleForTesting
     final void createAndroidTasks() {
+
+        if (extension.getCompileSdkVersion() == null) {
+            if (SyncOptions.getModelQueryMode(projectOptions)
+                    .equals(SyncOptions.EvaluationMode.IDE)) {
+                String newCompileSdkVersion = findHighestSdkInstalled();
+                if (newCompileSdkVersion == null) {
+                    newCompileSdkVersion = "android-" + SdkVersionInfo.HIGHEST_KNOWN_STABLE_API;
+                }
+                extension.setCompileSdkVersion(newCompileSdkVersion);
+            }
+
+            globalScope
+                    .getDslScope()
+                    .getIssueReporter()
+                    .reportError(
+                            Type.COMPILE_SDK_VERSION_NOT_SET,
+                            "compileSdkVersion is not specified. Please add it to build.gradle");
+        }
+
         // Make sure unit tests set the required fields.
         checkState(extension.getCompileSdkVersion() != null, "compileSdkVersion is not specified.");
+
+        //设置 Java 的版本
         extension
                 .getCompileOptions()
                 .setDefaultJavaVersion(AbstractCompilesUtil.getDefaultJavaVersion(extension.getCompileSdkVersion()));
 
-        // get current plugins and look for the default Java plugin.
+        //查找 Java Plugin
         if (project.getPlugins().hasPlugin(JavaPlugin.class)) {
-            throw new BadPluginException(
-                    "The 'java' plugin has been applied, but it is not compatible with the Android plugins.");
+            throw new BadPluginException("The 'java' plugin has been applied, but it is not compatible with the Android plugins.");
         }
 
+        //查找 “me.tatarka.retrolambda” 插件，此插件要求必须使用 Java 8， 发出一个警告
         if (project.getPlugins().hasPlugin("me.tatarka.retrolambda")) {
             String warningMsg =
                     "One of the plugins you are using supports Java 8 "
@@ -482,13 +515,13 @@ createTasks {
                             + "    apply plugin: 'me.tatarka.retrolambda'\n"
                             + "To learn more, go to https://d.android.com/r/"
                             + "tools/java-8-support-message.html\n";
-            extraModelInfo
-                    .getSyncIssueHandler()
-                    .reportWarning(EvalIssueReporter.Type.GENERIC, warningMsg);
+            globalScope
+                    .getDslScope()
+                    .getIssueReporter()
+                    .reportWarning(IssueReporter.Type.GENERIC, warningMsg);
         }
 
-        // TODO(112700217): Only force the SDK resolution when in sync mode. Also move this to
-        // as late as possible so we configure most tasks as possible  during sync.
+        //Only force the SDK resolution when in sync mode. Also move this to as late as possible so we configure most tasks as possible  during sync.
         if (globalScope.getSdkComponents().getSdkFolder() == null) {
             return;
         }
