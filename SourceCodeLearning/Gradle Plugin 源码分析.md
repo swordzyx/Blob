@@ -9,6 +9,63 @@
 
 
 
+通过 “./gradlew app:assembleDebug --console=plain” 可查看 APK 构建过程所涉及的 Tasks
+```java
+ > Task :buildSrc:compileJava UP-TO-DATE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:processResources NO-SOURCE
+> Task :buildSrc:classes UP-TO-DATE
+> Task :buildSrc:jar UP-TO-DATE
+> Task :buildSrc:assemble UP-TO-DATE
+> Task :buildSrc:compileTestJava NO-SOURCE
+> Task :buildSrc:compileTestGroovy NO-SOURCE
+> Task :buildSrc:processTestResources NO-SOURCE
+> Task :buildSrc:testClasses UP-TO-DATE
+> Task :buildSrc:test NO-SOURCE
+> Task :buildSrc:check UP-TO-DATE
+> Task :buildSrc:build UP-TO-DATE
+> Configure project :gradleplugin
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:compileDebugAidl NO-SOURCE
+> Task :app:compileDebugRenderscript NO-SOURCE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:compileDebugKotlin
+
+> Task :app:compileDebugJavaWithJavac
+注: D:\GitCode\Android-Pratice\HencoderSourceCode\app\src\main\java\com\example\hencodersourcecode\Main.java使用了未经检查或不安全的操作。
+注: 有关详细信息, 请使用 -Xlint:unchecked 重新编译。
+> Task :app:compileDebugSources
+> Task :app:processDebugJavaRes NO-SOURCE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:dexBuilderDebug
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols NO-SOURCE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:mergeDexDebug
+> Task :app:packageDebug
+> Task :app:assembleDebug
+
+BUILD SUCCESSFUL in 16s
+21 actionable tasks: 5 executed, 16 up-to-date
+
+```
+
 
 打包 apk 使用的是 “com.android.application” 插件，在 `gradle-3.4.2.jar/META-INF/gradle-plugins/com.android.application.properties` 文件中配置了 “com.android.application” 插件对应的实现类
 ```groovy
@@ -471,161 +528,457 @@ createTasks {
 
 
 
-    @VisibleForTesting
-    final void createAndroidTasks() {
+    1. 检测 CompileSdkVersion，是否有插件配置冲突（如 JavaPlugin，retrolambda 等）
+    2. 将 Project Path，CompileSdk, BuildToolsVersion, Splits, KotlinPluginVersion, FirebasePerformancePluginVersion 等信息写入 Project 中
+    3. 创建应用的 Tasks
+    createAndroidTasks() {
+        //主要生成 flavors 相关的数据，并根据 flavor 创建与之对应的 Taks，并注册到 Task 容器中
+        @VisibleForTesting
+        final void createAndroidTasks() {
 
-        if (extension.getCompileSdkVersion() == null) {
-            if (SyncOptions.getModelQueryMode(projectOptions)
-                    .equals(SyncOptions.EvaluationMode.IDE)) {
-                String newCompileSdkVersion = findHighestSdkInstalled();
-                if (newCompileSdkVersion == null) {
-                    newCompileSdkVersion = "android-" + SdkVersionInfo.HIGHEST_KNOWN_STABLE_API;
+            if (extension.getCompileSdkVersion() == null) {
+                if (SyncOptions.getModelQueryMode(projectOptions).equals(SyncOptions.EvaluationMode.IDE)) {
+                    String newCompileSdkVersion = findHighestSdkInstalled();
+                    if (newCompileSdkVersion == null) {
+                        newCompileSdkVersion = "android-" + SdkVersionInfo.HIGHEST_KNOWN_STABLE_API;
+                    }
+                    extension.setCompileSdkVersion(newCompileSdkVersion);
                 }
-                extension.setCompileSdkVersion(newCompileSdkVersion);
+
+                globalScope
+                        .getDslScope()
+                        .getIssueReporter()
+                        .reportError(
+                                Type.COMPILE_SDK_VERSION_NOT_SET,
+                                "compileSdkVersion is not specified. Please add it to build.gradle");
             }
 
-            globalScope
-                    .getDslScope()
-                    .getIssueReporter()
-                    .reportError(
-                            Type.COMPILE_SDK_VERSION_NOT_SET,
-                            "compileSdkVersion is not specified. Please add it to build.gradle");
-        }
+            // Make sure unit tests set the required fields.
+            checkState(extension.getCompileSdkVersion() != null, "compileSdkVersion is not specified.");
 
-        // Make sure unit tests set the required fields.
-        checkState(extension.getCompileSdkVersion() != null, "compileSdkVersion is not specified.");
+            //设置 Java 的版本
+            extension
+                    .getCompileOptions()
+                    .setDefaultJavaVersion(AbstractCompilesUtil.getDefaultJavaVersion(extension.getCompileSdkVersion()));
 
-        //设置 Java 的版本
-        extension
-                .getCompileOptions()
-                .setDefaultJavaVersion(AbstractCompilesUtil.getDefaultJavaVersion(extension.getCompileSdkVersion()));
+            //查找 Java Plugin
+            if (project.getPlugins().hasPlugin(JavaPlugin.class)) {
+                throw new BadPluginException("The 'java' plugin has been applied, but it is not compatible with the Android plugins.");
+            }
 
-        //查找 Java Plugin
-        if (project.getPlugins().hasPlugin(JavaPlugin.class)) {
-            throw new BadPluginException("The 'java' plugin has been applied, but it is not compatible with the Android plugins.");
-        }
+            //查找 “me.tatarka.retrolambda” 插件，此插件要求必须使用 Java 8， 发出一个警告
+            if (project.getPlugins().hasPlugin("me.tatarka.retrolambda")) {
+                String warningMsg =
+                        "One of the plugins you are using supports Java 8 "
+                                + "language features. To try the support built into"
+                                + " the Android plugin, remove the following from "
+                                + "your build.gradle:\n"
+                                + "    apply plugin: 'me.tatarka.retrolambda'\n"
+                                + "To learn more, go to https://d.android.com/r/"
+                                + "tools/java-8-support-message.html\n";
+                globalScope
+                        .getDslScope()
+                        .getIssueReporter()
+                        .reportWarning(IssueReporter.Type.GENERIC, warningMsg);
+            }
 
-        //查找 “me.tatarka.retrolambda” 插件，此插件要求必须使用 Java 8， 发出一个警告
-        if (project.getPlugins().hasPlugin("me.tatarka.retrolambda")) {
-            String warningMsg =
-                    "One of the plugins you are using supports Java 8 "
-                            + "language features. To try the support built into"
-                            + " the Android plugin, remove the following from "
-                            + "your build.gradle:\n"
-                            + "    apply plugin: 'me.tatarka.retrolambda'\n"
-                            + "To learn more, go to https://d.android.com/r/"
-                            + "tools/java-8-support-message.html\n";
-            globalScope
-                    .getDslScope()
-                    .getIssueReporter()
-                    .reportWarning(IssueReporter.Type.GENERIC, warningMsg);
-        }
+            //Only force the SDK resolution when in sync mode. Also move this to as late as possible so we configure most tasks as possible during sync.
+            if (globalScope.getSdkComponents().getSdkFolder() == null) {
+                return;
+            }
+            // 如果 project 没有被初始化，则不执行任何事情
+            if ((!project.getState().getExecuted() || project.getState().getFailure() != null) && SdkLocator.getSdkTestDirectory() == null) {
+                return;
+            }
 
-        //Only force the SDK resolution when in sync mode. Also move this to as late as possible so we configure most tasks as possible  during sync.
-        if (globalScope.getSdkComponents().getSdkFolder() == null) {
-            return;
-        }
-        // don't do anything if the project was not initialized.
-        // Unless TEST_SDK_DIR is set in which case this is unit tests and we don't return.
-        // This is because project don't get evaluated in the unit test setup.
-        // See AppPluginDslTest
-        if ((!project.getState().getExecuted() || project.getState().getFailure() != null) && SdkLocator.getSdkTestDirectory() == null) {
-            return;
-        }
+            if (hasCreatedTasks) {
+                return;
+            }
+            hasCreatedTasks = true;
 
-        if (hasCreatedTasks) {
-            return;
-        }
-        hasCreatedTasks = true;
+            extension.disableWrite();
 
-        extension.disableWrite();
+            taskManager.configureCustomLintChecks();
 
-        taskManager.configureCustomLintChecks();
-
-        ProcessProfileWriter.getProject(project.getPath())
-                .setCompileSdk(extension.getCompileSdkVersion())
-                .setBuildToolsVersion(extension.getBuildToolsRevision().toString())
-                .setSplits(AnalyticsUtil.toProto(extension.getSplits()));
-
-        String kotlinPluginVersion = getKotlinPluginVersion();
-        if (kotlinPluginVersion != null) {
+            //写入 Project 配置
             ProcessProfileWriter.getProject(project.getPath())
-                    .setKotlinPluginVersion(kotlinPluginVersion);
-        }
+                    .setCompileSdk(extension.getCompileSdkVersion())
+                    .setBuildToolsVersion(extension.getBuildToolsRevision().toString())
+                    .setSplits(AnalyticsUtil.toProto(extension.getSplits()));
 
-        //创建构建变体，并为构建变体创建构建任务
-        List<VariantScope> variantScopes = variantManager.createAndroidTasks();
+            String kotlinPluginVersion = getKotlinPluginVersion();
+            if (kotlinPluginVersion != null) {
+                ProcessProfileWriter.getProject(project.getPath())
+                        .setKotlinPluginVersion(kotlinPluginVersion);
+            }
 
-        ApiObjectFactory apiObjectFactory =
-                new ApiObjectFactory(
-                        extension,
-                        variantFactory,
-                        project.getObjects());
-        for (VariantScope variantScope : variantScopes) {
-            BaseVariantData variantData = variantScope.getVariantData();
-            apiObjectFactory.create(variantData);
-        }
+            //获取 Kotlin 插件的版本
+            String kotlinPluginVersion = getKotlinPluginVersion();
+            //设置 kotlin 插件版本
+            if (kotlinPluginVersion != null) {
+                ProcessProfileWriter.getProject(project.getPath()).setKotlinPluginVersion(kotlinPluginVersion);
+            }
 
-        // Make sure no SourceSets were added through the DSL without being properly configured
-        // Only do it if we are not restricting to a single variant (with Instant
-        // Run or we can find extra source set
-        if (projectOptions.get(StringOption.IDE_RESTRICT_VARIANT_NAME) == null) {
+            //Firebase 插件相关
+            AnalyticsUtil.recordFirebasePerformancePluginVersion(project);
+
+            //创建构建变体和构建任务。
+            List<VariantScope> variantScopes = variantManager.createVariantsAndTasks();
+
+            //配置依赖
+            new DependencyConfigurator(project, project.getName(), globalScope, variantInputModel).configureDependencies();
+
+            // Run the old Variant API, after the variants and tasks have been created.
+            ApiObjectFactory apiObjectFactory = new ApiObjectFactory(extension, variantFactory, project.getObjects());
+            for (VariantScope variantScope : variantScopes) {
+                BaseVariantData variantData = variantScope.getVariantData();
+                apiObjectFactory.create(variantData);
+            }
+
+            // Make sure no SourceSets were added through the DSL without being properly configured
             sourceSetManager.checkForUnconfiguredSourceSets();
+
+            // must run this after scopes are created so that we can configure kotlin kapt tasks
+            taskManager.addBindingDependenciesIfNecessary(
+                    globalScope.getBuildFeatures().getViewBinding(),
+                    globalScope.getBuildFeatures().getDataBinding(),
+                    extension.getDataBinding(),
+                    variantManager.getVariantScopes());
+
+            // configure compose related tasks.
+            taskManager.configureKotlinPluginTasksForComposeIfNecessary(globalScope, variantManager.getVariantScopes());
+
+            // create the global lint task that depends on all the variants
+            taskManager.configureGlobalLintTask(variantManager.getVariantScopes());
+
+            int flavorDimensionCount = 0;
+            if (extension.getFlavorDimensionList() != null) {
+                flavorDimensionCount = extension.getFlavorDimensionList().size();
+            }
+
+            //获取变体维度
+            int flavorDimensionCount = 0;
+            if (extension.getFlavorDimensionList() != null) {
+                flavorDimensionCount = extension.getFlavorDimensionList().size();
+            }
+
+            //创建 assemble* 和 bundle* 任务作为锚定任务。
+            taskManager.createAnchorAssembleTasks(variantScopes, extension.getProductFlavors().size(), flavorDimensionCount);
+
+            // now publish all variant artifacts.
+            for (VariantScope variantScope : variantManager.getVariantScopes()) {
+                variantManager.publishBuildArtifacts(variantScope);
+            }
+
+            checkSplitConfiguration();
+            variantManager.setHasCreatedTasks(true);
+            // notify our properties that configuration is over for us. 评估阶段结束
+            GradleProperty.Companion.endOfEvaluation();
+
         }
 
-        // must run this after scopes are created so that we can configure kotlin kapt tasks
-        taskManager.addDataBindingDependenciesIfNecessary(extension.getDataBinding(), variantManager.getVariantScopes());
+        1. 创建工程级别的测试任务
+        2. 遍历所有的 variantScope，为其变体数据创建相应的 Tasks
+        3. 创建报告相关的 Tasks
+        createVariantsAndTasks() {
+            //VariantManager.java
+            public List<VariantScope> createVariantsAndTasks() {
+                //variantInputModel 在 configureExtension 中初始化，执行校验工作
+                variantFactory.validateModel(variantInputModel);
+                variantFactory.preVariantWork(project);
+
+                //创建构建变体，并往变体中填充信息，添加到 variantScope 中
+                if (variantScopes.isEmpty()) {
+                    computeVariants();
+                }
+
+                // Create top level test tasks.
+                taskManager.createTopLevelTestTasks(!variantInputModel.getProductFlavors().isEmpty());
+
+                // Create tasks for all variants (main and tests)
+                for (final VariantScope variantScope : variantScopes) {
+                    createTasksForVariant(variantScope);
+                }
+
+                taskManager.createReportTasks(variantScopes);
+
+                return variantScopes;
+            }
+
+            //计算构建变体
+            //VariantManger.java
+            computeVariants() {
+                //VariantManager.java
+                @VisibleForTesting
+                public void computeVariants() {
+                    //获取所有的维度
+                    List<String> flavorDimensionList = extension.getFlavorDimensionList();
+
+                    //从 variantInputModel 中计算所有 dimension(维度)&productflavor(产品变种) 的组合，创建构建组件/变体
+                    DimensionCombinator computer =
+                            new DimensionCombinator(
+                                    variantInputModel,
+                                    globalScope.getDslScope().getIssueReporter(),
+                                    variantFactory.getVariantType(),
+                                    flavorDimensionList);
+
+                    //获取计算出的构建变体。
+                    List<DimensionCombination> variants = computer.computeVariants();
+
+                    // get some info related to testing
+                    BuildTypeData testBuildTypeData = getTestBuildTypeData();
+
+                    // loop on all the new variant objects to create the legacy ones.
+                    for (DimensionCombination variant : variants) {
+                        createVariantsFromConfiguration(variant, testBuildTypeData);
+                    }
+
+                    //Configure artifact transforms that require variant-specific attribute information.
+                    configureVariantArtifactTransforms(variantScopes);
+                }
+
+                //VariantManager.java
+                //创建所有 dimension()&productflavor() 组合而成的构建变体，实际创建的是 variantData 对象
+                private void createVariantsFromConfiguration(@NonNull DimensionCombination dimensionCombination, @Nullable BuildTypeData testBuildTypeData) {
+                    //这里返回的是 VariantTypeImpl.BASE_APK 或者 VariantTypeImpl.OPTIONAL_APK
+                    VariantType variantType = variantFactory.getVariantType();
+
+                    // first run the old variantFilter API . This acts on buildtype/flavor only, and applies in one pass to prod/tests.
+                    Action<com.android.build.api.variant.VariantFilter> variantFilterAction = extension.getVariantFilter();
+
+                    //获取 build.gradle 文件中 productFlavor{...} 配置的信息（产品变种）
+                    DefaultConfig defaultConfig = variantInputModel.getDefaultConfig().getProductFlavor();
+
+                    //保存 build.gradle 文件中 buildTypes{...} 配置的信息（构建类型，一般是 debug 和 release）
+                    BuildTypeData buildTypeData = variantInputModel.getBuildTypes().get(dimensionCombination.getBuildType());
+                    BuildType buildType = buildTypeData.getBuildType();
+
+                    //get the list of ProductFlavorData from the list of flavor name
+                    //ProductFlavorData.ProductFlavor 代表了一个产品变种，此处根据 productFlavor 的名称创建出所有的 productFlavor 所对应的 ProductFlavor, 封装到 ProductFlavorData 中，保存到一个 List 中
+                    List<ProductFlavorData<ProductFlavor>> productFlavorDataList =
+                            dimensionCombination
+                                    .getProductFlavors()
+                                    .stream()
+                                    .map(it -> variantInputModel.getProductFlavors().get(it.getSecond()))
+                                    .collect(Collectors.toList());
+
+                    List<ProductFlavor> productFlavorList = productFlavorDataList
+                            .stream()
+                            .map(ProductFlavorData::getProductFlavor)
+                            .collect(Collectors.toList());
+
+                    boolean ignore = false;
+
+                    if (variantFilterAction != null) {
+                        variantFilter.reset(dimensionCombination, defaultConfig, buildType, variantType, productFlavorList);
+
+                        try {
+                            // variantFilterAction != null always true here.
+                            variantFilterAction.execute(variantFilter);
+                        } catch (Throwable t) {
+                            throw new ExternalApiUsageException(t);
+                        }
+                        ignore = variantFilter.getIgnore();
+                    }
+
+                    if (!ignore) {
+                        // create the prod variant
+                        BaseVariantData variantData = createVariant(dimensionCombination, buildTypeData, productFlavorDataList, variantType);
+                        if (variantData != null) {
+                            addVariant(variantData);
+
+                            VariantDslInfo variantDslInfo = variantData.getVariantDslInfo();
+                            VariantScope variantScope = variantData.getScope();
+
+                            int minSdkVersion = variantDslInfo.getMinSdkVersion().getApiLevel();
+                            int targetSdkVersion = variantDslInfo.getTargetSdkVersion().getApiLevel();
+                            if (minSdkVersion > 0 && targetSdkVersion > 0 && minSdkVersion > targetSdkVersion) {
+                                globalScope
+                                        .getDslScope()
+                                        .getIssueReporter()
+                                        .reportWarning(
+                                                IssueReporter.Type.GENERIC,
+                                                String.format(Locale.US,
+                                                        "minSdkVersion (%d) is greater than targetSdkVersion"
+                                                                + " (%d) for variant \"%s\". Please change the"
+                                                                + " values such that minSdkVersion is less than or"
+                                                                + " equal to targetSdkVersion.",
+                                                        minSdkVersion,
+                                                        targetSdkVersion,
+                                                        variantData.getName()));
+                            }
+
+                            GradleBuildVariant.Builder profileBuilder = ProcessProfileWriter.getOrCreateVariant(project.getPath(), variantData.getName())
+                                    .setIsDebug(buildType.isDebuggable())
+                                    .setMinSdkVersion(AnalyticsUtil.toProto(variantDslInfo.getMinSdkVersion()))
+                                    .setMinifyEnabled(variantScope.getCodeShrinker() != null)
+                                    .setUseMultidex(variantDslInfo.isMultiDexEnabled())
+                                    .setUseLegacyMultidex(variantDslInfo.isLegacyMultiDexMode())
+                                    .setVariantType(variantData.getType().getAnalyticsVariantType())
+                                    .setDexBuilder(AnalyticsUtil.toProto(variantScope.getDexer()))
+                                    .setDexMerger(AnalyticsUtil.toProto(variantScope.getDexMerger()))
+                                    .setCoreLibraryDesugaringEnabled(variantScope.isCoreLibraryDesugaringEnabled())
+                                    .setTestExecution(AnalyticsUtil.toProto(globalScope.getExtension().getTestOptions().getExecutionEnum()));
+
+                            if (variantScope.getCodeShrinker() != null) {
+                                profileBuilder.setCodeShrinker(AnalyticsUtil.toProto(variantScope.getCodeShrinker()));
+                            }
+
+                            if (variantDslInfo.getTargetSdkVersion().getApiLevel() > 0) {
+                                profileBuilder.setTargetSdkVersion(AnalyticsUtil.toProto(variantDslInfo.getTargetSdkVersion()));
+                            }
+                            if (variantDslInfo.getMaxSdkVersion() != null) {
+                                profileBuilder.setMaxSdkVersion(ApiVersion.newBuilder().setApiLevel(variantDslInfo.getMaxSdkVersion()));
+                            }
+
+                            VariantScope.Java8LangSupport supportType = variantData.getScope().getJava8LangSupportType();
+                            if (supportType != VariantScope.Java8LangSupport.INVALID && supportType != VariantScope.Java8LangSupport.UNUSED) {
+                                profileBuilder.setJava8LangSupport(AnalyticsUtil.toProto(supportType));
+                            }
+
+                            //AndroidTest 和 UnitTest 相关
+                            if (variantFactory.hasTestScope()) {
+                                if (buildTypeData == testBuildTypeData) {
+                                    TestVariantData androidTestVariantData = createTestComponents(dimensionCombination, buildTypeData, productFlavorDataList, variantData, ANDROID_TEST);
+                                    if (androidTestVariantData != null) {
+                                        addVariant(androidTestVariantData);
+                                    }
+                                }
+
+                                TestVariantData unitTestVariantData = createTestComponents(dimensionCombination, buildTypeData, productFlavorDataList, variantData, UNIT_TEST);
+                                if (unitTestVariantData != null) {
+                                    addVariant(unitTestVariantData);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
 
-        // create the global lint task that depends on all the variants
-        taskManager.configureGlobalLintTask(variantManager.getVariantScopes());
+            1. 创建 Assemble Task
+            2. 如果 VariantType 是 base module，则创建相应的 Bundle Task，一般是构建 App Bundle 才有 base module 这一说
+            3. 如果 VariantType 是一个 test module，则创建相应的 test variant
+                - 添加依赖：将 variant-specific, build type, multi-flavor, defaultConfig 依赖添加到 variantData 中
+                - 添加渲染脚本依赖：如果支持渲染脚本，则添加渲染脚本的依赖
+                - 如果是 ANDROID_TEST，则会输出 apk ，创建相应的 AndroidTestVariantTasks
+                - 如果是 UNIT_TEST，表明是单元测试，则创建 UnitTestVariantTask。
+            4. 如果不是 test module，则创建正是构建相关的任务。
+            //VariantManager
+            createTasksForVariant() {
 
-        int flavorDimensionCount = 0;
-        if (extension.getFlavorDimensionList() != null) {
-            flavorDimensionCount = extension.getFlavorDimensionList().size();
+                /** 为特定的构建变体创建 Task */
+                private void createTasksForVariant(final VariantScope variantScope) {
+                    final BaseVariantData variantData = variantScope.getVariantData();
+                    final VariantType variantType = variantData.getType();
+                    final VariantDslInfo variantDslInfo = variantScope.getVariantDslInfo();
+                    final VariantSources variantSources = variantScope.getVariantSources();
+
+                    //创建 Assemble Task
+                    taskManager.createAssembleTask(variantData);
+
+                    //如果 variantType 是 base module，则创建相应的 bundle Task
+                    //base module 指包含功能的 module，用于 test 的 module 不包含功能
+                    //如果是 Bundle 构建中的基础模块，创建 Bundle 任务，不过我看的是 apk 构建的源码把。。。所以这里应该是 false 了。
+                    if (variantType.isBaseModule()) {
+                        taskManager.createBundleTask(variantData);
+                    }
+
+                    //测试相关
+                    if (variantType.isTestComponent()) {
+                        //将 variant-specific, build type, multi-flavor, defaultConfig 这些依赖添加到当前的 TestVariantData 中
+                        final BaseVariantData testedVariantData = (BaseVariantData) ((TestVariantData) variantData).getTestedVariantData();
+
+                        List<ProductFlavor> testProductFlavors = variantDslInfo.getProductFlavorList();
+                        List<DefaultAndroidSourceSet> testVariantSourceSets = Lists.newArrayListWithExpectedSize(4 + testProductFlavors.size());
+
+                        // 1. add the variant-specific if applicable.
+                        if (!testProductFlavors.isEmpty()) {
+                            testVariantSourceSets.add((DefaultAndroidSourceSet) variantSources.getVariantSourceProvider());
+                        }
+
+                        // 2. the build type.
+                        final BuildTypeData buildTypeData = variantInputModel.getBuildTypes().get(variantDslInfo.getComponentIdentity().getBuildType());
+                        DefaultAndroidSourceSet buildTypeConfigurationProvider = buildTypeData.getTestSourceSet(variantType);
+                        if (buildTypeConfigurationProvider != null) {
+                            testVariantSourceSets.add(buildTypeConfigurationProvider);
+                        }
+
+                        // 3. the multi-flavor combination
+                        if (testProductFlavors.size() > 1) {
+                            testVariantSourceSets.add((DefaultAndroidSourceSet) variantSources.getMultiFlavorSourceProvider());
+                        }
+
+                        // 4. the flavors.
+                        for (ProductFlavor productFlavor : testProductFlavors) {
+                            testVariantSourceSets.add(variantInputModel.getProductFlavors().get(productFlavor.getName()).getTestSourceSet(variantType));
+                        }
+
+                        // now add the default config
+                        testVariantSourceSets.add(variantInputModel.getDefaultConfig().getTestSourceSet(variantType));
+
+                        // If the variant being tested is a library variant, VariantDependencies must be computed after the tasks for the tested variant is created.  Therefore, the VariantDependencies is computed here instead of when the VariantData was created.
+                        VariantDependencies.Builder builder = VariantDependencies.builder(project, variantScope.getGlobalScope().getDslScope().getIssueReporter(), variantDslInfo)
+                                .addSourceSets(testVariantSourceSets)
+                                .setFlavorSelection(getFlavorSelection(variantDslInfo))
+                                .setTestedVariantScope(testedVariantData.getScope());
+
+                        final VariantDependencies variantDep = builder.build(variantScope);
+                        //到这里为止，为 TestVariantData 设置了 variant-specific, build type, multi-flavor, defaultConfig 依赖
+                        variantData.setVariantDependency(variantDep);
+
+                        //如果支持渲染脚本，则添加渲染脚本的依赖
+                        if (testedVariantData.getVariantDslInfo().getRenderscriptSupportModeEnabled()) {
+                            project.getDependencies().add(variantDep.getCompileClasspath().getName(), project.files(globalScope.getSdkComponents().getRenderScriptSupportJarProvider()));
+                        }
+
+                        //当前 TestVariantData 构建输出的是一个 apk，即当前执行的是一个 Android test（一般用来进行 UI 自动化测试），则创建线狗盈的 AndroidTestVariantTasks
+                        //ANDROID_TEST 是构建一个测试 apk
+                        //UNIT_TEST 则是单元测试，测试某一个方法或者 API
+                        if (variantType.isApk()) { // ANDROID_TEST
+                            if (variantDslInfo.isLegacyMultiDexMode()) {
+                                String multiDexInstrumentationDep =
+                                        globalScope.getProjectOptions().get(BooleanOption.USE_ANDROID_X)
+                                                ? ANDROIDX_MULTIDEX_MULTIDEX_INSTRUMENTATION
+                                                : COM_ANDROID_SUPPORT_MULTIDEX_INSTRUMENTATION;
+                                project.getDependencies().add(variantDep.getCompileClasspath().getName(), multiDexInstrumentationDep);
+                                project.getDependencies().add(variantDep.getRuntimeClasspath().getName(), multiDexInstrumentationDep);
+                            }
+
+                            //创建 AndroidTestVariantTasks 来构建 apk
+                            taskManager.createAndroidTestVariantTasks((TestVariantData) variantData, variantScopes.stream().filter(TaskManager::isLintVariant).collect(Collectors.toList()));
+                        } else { // UNIT_TEST
+                            //单元测试，创建 UnitTestVariantTask。
+                            taskManager.createUnitTestVariantTasks((TestVariantData) variantData);
+                        }
+                    } else {
+                        //非测试，则创建正式的构建任务
+                        taskManager.createTasksForVariantScope(variantScope, variantScopes.stream().filter(TaskManager::isLintVariant).collect(Collectors.toList()));
+                    }
+                }
+
+
+                创建正式构建相关的 Task。这里面会创建 Android 打包流程过程中所需要的 Task，主要有以下几个步骤
+                1. 通过 aidl 工具将 .aidl(Android Interface Description Language) 转换成 java 文件
+                2. 使用 AAPT(Asset Packaging Tool，不过 Android Gradle Plugin 3.0.0 之后 AAPT 被 AAPT2 代替了)将资源文件（包括 AndroidManifest.xml，布局文件，xml 资源等）转为 resources.arsc 文件，并生成 R.java 以访问 resources.arsc 中的资源
+                3. 使用 Java Compiler 将 R.java，Java 接口文件，Java 源文件编译成 .class 文件
+                4. 使用 dex 工具将 .class 文件转成 Android 设备能够执行的 dex 文件（里面是 Dalvik 字节码），这个过程会压缩常量池，清除冗余信息等，添加依赖的第三方库等
+                5. 使用 ApkBuilder 工具将资源文件（resources.arsc），Dex 文件打包成 apk 文件
+                6. 使用 jarsigner 等签名工具对 apk 进行签名。
+                7. 正式版的 apk 会使用 ZipAlign 工具进行对齐处理，以提高 apk 的加载和运行速度。对齐过程就是将 APK 文件中所有的资源文件都偏移 4 字节的整数倍，这样通过 mmap 访问 apk 文件的速度会更快，且减少运行时所占用的内存。
+
+                
+                createTasksForVariantScope() {
+
+                }
+            }
         }
-
-        taskManager.createAnchorAssembleTasks(
-                variantScopes,
-                extension.getProductFlavors().size(),
-                flavorDimensionCount,
-                variantFactory.getVariantConfigurationTypes().size());
-
-        // now publish all variant artifacts.
-        for (VariantScope variantScope : variantManager.getVariantScopes()) {
-            variantManager.publishBuildArtifacts(variantScope);
-        }
-
-        checkSplitConfiguration();
-        variantManager.setHasCreatedTasks(true);
     }
+    
+    
 
 
-    //VariantManager.java
-    //变体/任务创建入口点
-    public List<VariantScope> createAndroidTasks() {
-        variantFactory.validateModel(this);
-        variantFactory.preVariantWork(project);
 
-        //此时 variantScopes 为空，创建构建变体数据（VariantData），并添加到 variantScope 中
-        if (variantScopes.isEmpty()) {
-            populateVariantDataList();
-        }
-
-        // Create top level test tasks.
-        taskManager.createTopLevelTestTasks(!productFlavors.isEmpty());
-
-        //构建任务。
-        for (final VariantScope variantScope : variantScopes) {
-            createTasksForVariantData(variantScope);
-        }
-
-        taskManager.createSourceSetArtifactReportTask(globalScope);
-
-        taskManager.createReportTasks(variantScopes);
-
-        return variantScopes;
-    }
 
 
     //VariantManager.java
