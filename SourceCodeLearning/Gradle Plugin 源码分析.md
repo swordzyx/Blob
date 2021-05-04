@@ -967,392 +967,392 @@ createTasks {
                 6. 使用 jarsigner 等签名工具对 apk 进行签名。
                 7. 正式版的 apk 会使用 ZipAlign 工具进行对齐处理，以提高 apk 的加载和运行速度。对齐过程就是将 APK 文件中所有的资源文件都偏移 4 字节的整数倍，这样通过 mmap 访问 apk 文件的速度会更快，且减少运行时所占用的内存。
 
-                
+                //ApplicationTaskManager.java
                 createTasksForVariantScope() {
+                    @Override
+                    public void createTasksForVariantScope(@NonNull final VariantScope variantScope, @NonNull List<VariantScope> variantScopesForLint) {
+                        createAnchorTasks(variantScope);
 
-                }
-            }
-        }
-    }
-    
-    
+                        taskFactory.register(new ExtractDeepLinksTask.CreationAction(variantScope));
 
+                        handleMicroApp(variantScope);
 
+                        // Create all current streams (dependencies mostly at this point)
+                        createDependencyStreams(variantScope);
 
+                        // Add a task to publish the applicationId.
+                        createApplicationIdWriterTask(variantScope);
 
+                        createBuildArtifactReportTask(variantScope);
 
-    //VariantManager.java
-    populateVariantDataList {
-        //VariantManager.java
-        //创建所有的变体
-        public void populateVariantDataList() {
-            List<String> flavorDimensionList = extension.getFlavorDimensionList();
+                        // Add a task to check the manifest
+                        taskFactory.register(new CheckManifest.CreationAction(variantScope));
 
-            if (productFlavors.isEmpty()) {
-                configureDependencies();
-                createVariantDataForProductFlavors(Collections.emptyList());
-            } else {
-                // 设置构建变体的维度
-                if (flavorDimensionList == null || flavorDimensionList.isEmpty()) {
-                    globalScope
-                            .getErrorHandler()
-                            .reportError(
-                                    EvalIssueReporter.Type.UNNAMED_FLAVOR_DIMENSION,
-                                    new EvalIssueException(
-                                            "All flavors must now belong to a named flavor dimension. "
-                                                    + "Learn more at "
-                                                    + "https://d.android.com/r/tools/flavorDimensions-missing-error-message.html"));
-                } else if (flavorDimensionList.size() == 1) {
-                    // if there's only one dimension, auto-assign the dimension to all the flavors.
-                    String dimensionName = flavorDimensionList.get(0);
-                    for (ProductFlavorData<CoreProductFlavor> flavorData : productFlavors.values()) {
-                        CoreProductFlavor flavor = flavorData.getProductFlavor();
-                        if (flavor.getDimension() == null && flavor instanceof DefaultProductFlavor) {
-                            ((DefaultProductFlavor) flavor).setDimension(dimensionName);
-                        }
-                    }
-                }
+                        // Add a task to process the manifest(s)
+                        createMergeApkManifestsTask(variantScope);
 
-                // can only call this after we ensure all flavors have a dimension.
-                configureDependencies();
+                        // Add a task to create the res values
+                        createGenerateResValuesTask(variantScope);
 
-                // Create iterable to get GradleProductFlavor from ProductFlavorData.
-                Iterable<CoreProductFlavor> flavorDsl = Iterables.transform(productFlavors.values(), ProductFlavorData::getProductFlavor);
+                        // Add a task to compile renderscript files.
+                        createRenderscriptTask(variantScope);
 
-                // 获取产品变种与维度的所有组合
-                List<ProductFlavorCombo<CoreProductFlavor>> flavorComboList =
-                        ProductFlavorCombo.createCombinations(
-                                flavorDimensionList,
-                                flavorDsl);
+                        // Add a task to merge the resource folders
+                        createMergeResourcesTasks(variantScope);
 
-                for (ProductFlavorCombo<CoreProductFlavor>  flavorCombo : flavorComboList) {
-                    //noinspection unchecked
-                    createVariantDataForProductFlavors((List<ProductFlavor>) (List) flavorCombo.getFlavorList());
-                }
-            }
+                        // Add tasks to compile shader
+                        createShaderTask(variantScope);
 
-            configureVariantArtifactTransforms(variantScopes);
-        }
+                        // Add a task to merge the asset folders
+                        createMergeAssetsTask(variantScope);
 
+                        // Add a task to create the BuildConfig class
+                        createBuildConfigTask(variantScope);
 
-        //将给定的产品变体与所有的构建类型进行组合成构建变体，并创建
-        private void createVariantDataForProductFlavors(@NonNull List<ProductFlavor> productFlavorList) {
-            for (VariantType variantType : variantFactory.getVariantConfigurationTypes()) {
-                createVariantDataForProductFlavorsAndVariantType(productFlavorList, variantType);
-            }
-        }
+                        // Add a task to process the Android Resources and generate source files
+                        createApkProcessResTask(variantScope);
 
-        //VariantManager.java
-        private void createVariantDataForProductFlavorsAndVariantType( @NonNull List<ProductFlavor> productFlavorList, @NonNull VariantType variantType) {
+                        registerRClassTransformStream(variantScope);
 
-            BuildTypeData testBuildTypeData = null;
-            if (extension instanceof TestedAndroidConfig) {
-                TestedAndroidConfig testedExtension = (TestedAndroidConfig) extension;
+                        // Add a task to process the java resources
+                        createProcessJavaResTask(variantScope);
 
-                testBuildTypeData = buildTypes.get(testedExtension.getTestBuildType());
-                if (testBuildTypeData == null) {
-                    throw new RuntimeException(String.format(
-                            "Test Build Type '%1$s' does not exist.", testedExtension.getTestBuildType()));
-                }
-            }
+                        createAidlTask(variantScope);
 
-            BaseVariantData variantForAndroidTest = null;
+                        // Add external native build tasks
+                        createExternalNativeBuildJsonGenerators(variantScope);
+                        createExternalNativeBuildTasks(variantScope);
 
-            CoreProductFlavor defaultConfig = defaultConfigData.getProductFlavor();
+                        // Add a task to merge the jni libs folders
+                        createMergeJniLibFoldersTasks(variantScope);
 
-            Action<com.android.build.api.variant.VariantFilter> variantFilterAction = extension.getVariantFilter();
+                        // Add feature related tasks if necessary
+                        if (variantScope.getType().isBaseModule()) {
+                            // Base feature specific tasks.
+                            taskFactory.register(new FeatureSetMetadataWriterTask.CreationAction(variantScope));
 
-            final String restrictedProject = projectOptions.get(StringOption.IDE_RESTRICT_VARIANT_PROJECT);
-            final boolean restrictVariants = restrictedProject != null;
+                            createValidateSigningTask(variantScope);
+                            // Add a task to produce the signing config file.
+                            taskFactory.register(new SigningConfigWriterTask.CreationAction(variantScope));
 
-            // compare the project name if the type is not a lib.
-            final boolean projectMatch;
-            final String restrictedVariantName;
-            if (restrictVariants) {
-                projectMatch = variantType.isApk() && project.getPath().equals(restrictedProject);
-                restrictedVariantName = projectOptions.get(StringOption.IDE_RESTRICT_VARIANT_NAME);
-            } else {
-                projectMatch = false;
-                restrictedVariantName = null;
-            }
+                            if (!(((BaseAppModuleExtension) extension).getAssetPacks().isEmpty())) {
+                                createAssetPackTasks(variantScope);
+                            }
 
-            //获取并遍历所有的构建类型
-            for (BuildTypeData buildTypeData : buildTypes.values()) {
-                boolean ignore = false;
+                            if (globalScope.getBuildFeatures().getDataBinding()) {
+                                // Create a task that will package the manifest ids(the R file packages) of all
+                                // features into a file. This file's path is passed into the Data Binding annotation
+                                // processor which uses it to known about all available features.
+                                //
+                                // <p>see: {@link TaskManager#setDataBindingAnnotationProcessorParams(VariantScope)}
+                                taskFactory.register(new DataBindingExportFeatureApplicationIdsTask.CreationAction(variantScope));
 
-                //过滤不需要创建的构建变体
-                if (restrictVariants || variantFilterAction != null) {
-                    .......
-                }
-
-                if (!ignore) {
-                    BaseVariantData variantData =
-                            createVariantDataForVariantType(
-                                    buildTypeData.getBuildType(), productFlavorList, variantType);
-                    //注册一个新的变体，其实就是将 variantData 添加到 variantScopes 中，这是一个 VariantScope 集合
-                    addVariant(variantData);
-
-                    GradleVariantConfiguration variantConfig = variantData.getVariantConfiguration();
-                    VariantScope variantScope = variantData.getScope();
-
-                    int minSdkVersion = variantConfig.getMinSdkVersion().getApiLevel();
-                    int targetSdkVersion = variantConfig.getTargetSdkVersion().getApiLevel();
-                    //判断 SDK 版本号
-                    if (minSdkVersion > 0 && targetSdkVersion > 0 && minSdkVersion > targetSdkVersion) {
-                       ........
-                    }
-
-                    GradleBuildVariant.Builder profileBuilder =
-                            ProcessProfileWriter.getOrCreateVariant(
-                                            project.getPath(), variantData.getName())
-                                    .setIsDebug(variantConfig.getBuildType().isDebuggable())
-                                    .setMinSdkVersion(
-                                            AnalyticsUtil.toProto(variantConfig.getMinSdkVersion()))
-                                    .setMinifyEnabled(variantScope.getCodeShrinker() != null)
-                                    .setUseMultidex(variantConfig.isMultiDexEnabled())
-                                    .setUseLegacyMultidex(variantConfig.isLegacyMultiDexMode())
-                                    .setVariantType(variantData.getType().getAnalyticsVariantType())
-                                    //getDexer() 和 getDexMerger() 的具体实现类位于 VariantScopeImpl 中
-                                    .setDexBuilder(AnalyticsUtil.toProto(variantScope.getDexer()))
-                                    .setDexMerger(AnalyticsUtil.toProto(variantScope.getDexMerger()))
-                                    .setTestExecution(
-                                            AnalyticsUtil.toProto(
-                                                    globalScope
-                                                            .getExtension()
-                                                            .getTestOptions()
-                                                            .getExecutionEnum()));
-
-                    if (variantScope.getCodeShrinker() != null) {
-                        profileBuilder.setCodeShrinker(AnalyticsUtil.toProto(variantScope.getCodeShrinker()));
-                    }
-
-                    //设置 TargetSdkVersion，从 build.gradle 中读取
-                    if (variantConfig.getTargetSdkVersion().getApiLevel() > 0) {
-                        profileBuilder.setTargetSdkVersion(AnalyticsUtil.toProto(variantConfig.getTargetSdkVersion()));
-                    }
-                    //设置支持的最大 SDK 版本号
-                    if (variantConfig.getMergedFlavor().getMaxSdkVersion() != null) {
-                        profileBuilder.setMaxSdkVersion(ApiVersion.newBuilder().setApiLevel(variantConfig.getMergedFlavor().getMaxSdkVersion()));
-                    }
-
-                    VariantScope.Java8LangSupport supportType = variantData.getScope().getJava8LangSupportType();
-                    //检查是否支持 Java8
-                    if (supportType != VariantScope.Java8LangSupport.INVALID && supportType != VariantScope.Java8LangSupport.UNUSED) {
-                        profileBuilder.setJava8LangSupport(AnalyticsUtil.toProto(supportType));
-                    }
-
-                    if (variantFactory.hasTestScope()) {
-                        if (buildTypeData == testBuildTypeData) {
-                            variantForAndroidTest = variantData;
+                            }
+                        } else {
+                            // Non-base feature specific task.
+                            // Task will produce artifacts consumed by the base feature
+                            taskFactory.register(new FeatureSplitDeclarationWriterTask.CreationAction(variantScope));
+                            if (globalScope.getBuildFeatures().getDataBinding()) {
+                                // Create a task that will package necessary information about the feature into a
+                                // file which is passed into the Data Binding annotation processor.
+                                taskFactory.register(new DataBindingExportFeatureInfoTask.CreationAction(variantScope));
+                            }
+                            taskFactory.register(new ExportConsumerProguardFilesTask.CreationAction(variantScope));
+                            taskFactory.register(new FeatureNameWriterTask.CreationAction(variantScope));
                         }
 
-                        if (!variantType.isHybrid()) { // BASE_FEATURE/FEATURE
-                            // There's nothing special about unit testing the feature variant, so
-                            // there's no point creating the duplicate unit testing variant. This only
-                            // causes tests to run twice when running "testDebug".
-                            TestVariantData unitTestVariantData = createTestVariantData(variantData, UNIT_TEST);
-                            addVariant(unitTestVariantData);
+                        // Add data binding tasks if enabled
+                        createDataBindingTasksIfNecessary(variantScope);
+
+                        // Add a compile task
+                        createCompileTask(variantScope);
+
+                        taskFactory.register(new StripDebugSymbolsTask.CreationAction(variantScope));
+
+                        createPackagingTask(variantScope);
+
+                        maybeCreateLintVitalTask((ApkVariantData) variantScope.getVariantData(), variantScopesForLint);
+
+                        // Create the lint tasks, if enabled
+                        createLintTasks(variantScope, variantScopesForLint);
+
+                        taskFactory.register(new PackagedDependenciesWriterTask.CreationAction(variantScope));
+
+                        createDynamicBundleTask(variantScope);
+
+                        taskFactory.register(new ApkZipPackagingTask.CreationAction(variantScope));
+
+                        // do not publish the APK(s) if there are dynamic feature.
+                        if (!variantScope.getGlobalScope().hasDynamicFeatures()) {
+                            createSoftwareComponent(variantScope, "_apk", APK_PUBLICATION);
                         }
+                        createSoftwareComponent(variantScope, "_aab", AAB_PUBLICATION);
                     }
                 }
             }
-
-            if (variantForAndroidTest != null) {
-                // TODO: b/34624400
-                if (!variantType.isHybrid()) { // BASE_FEATURE/FEATURE
-                    TestVariantData androidTestVariantData = createTestVariantData(variantForAndroidTest, ANDROID_TEST);
-                    addVariant(androidTestVariantData);
-                }
-            }
         }
-    }
-    
-
-    //VariantManager.java
-    //为特定的构建变体创建任务
-    createTasksForVariantData {
-        //VariantManager.java
-        public void createTasksForVariantData(final VariantScope variantScope) {
-            //构建变体数据
-            final BaseVariantData variantData = variantScope.getVariantData();
-            //构建类型
-            final VariantType variantType = variantData.getType();
-            //
-            final GradleVariantConfiguration variantConfig = variantScope.getVariantConfiguration();
-            //创建 AssembleTask
-            taskManager.createAssembleTask(variantData);
-            if (variantType.isBaseModule()) {
-                taskManager.createBundleTask(variantData);
-            }
-
-            //判断当前构建的是否为测试模块
-            if (variantType.isTestComponent()) {
-                ......
-            } else {
-                //createTasksForVariantScope 的具体实现位于 ApplicationTaskManager 中
-                taskManager.createTasksForVariantScope(
-                        variantScope,
-                        variantScopes
-                                .stream()
-                                .filter(TaskManager::isLintVariant)
-                                .collect(Collectors.toList()));
-            }
-        }
-
-
-        //ApplicationTaskManager
-        //创建生成 APK 所需要的所有任务
-        @Override
-        public void createTasksForVariantScope(@NonNull final VariantScope variantScope, @NonNull List<VariantScope> variantScopesForLint) {
-            createAnchorTasks(variantScope);
-            createCheckManifestTask(variantScope);
-
-            handleMicroApp(variantScope);
-
-            // Create all current streams (dependencies mostly at this point)
-            createDependencyStreams(variantScope);
-
-            // Add a task to publish the applicationId.
-            createApplicationIdWriterTask(variantScope);
-
-            taskFactory.register(new MainApkListPersistence.CreationAction(variantScope));
-            createBuildArtifactReportTask(variantScope);
-
-            // Add a task to process the manifest(s)
-            createMergeApkManifestsTask(variantScope);
-
-            // Add a task to create the res values
-            createGenerateResValuesTask(variantScope);
-
-            // Add a task to compile renderscript files.
-            createRenderscriptTask(variantScope);
-
-            // Add a task to merge the resource folders
-            createMergeResourcesTask(variantScope, true, Sets.immutableEnumSet(MergeResources.Flag.PROCESS_VECTOR_DRAWABLES));
-
-            // Add tasks to compile shader
-            createShaderTask(variantScope);
-
-            // Add a task to merge the asset folders
-            createMergeAssetsTask(variantScope);
-
-            // Add a task to create the BuildConfig class
-            createBuildConfigTask(variantScope);
-
-            // Add a task to process the Android Resources and generate source files
-            createApkProcessResTask(variantScope);
-
-            // Add a task to process the java resources
-            createProcessJavaResTask(variantScope);
-
-            createAidlTask(variantScope);
-
-            // Add external native build tasks
-            createExternalNativeBuildJsonGenerators(variantScope);
-            createExternalNativeBuildTasks(variantScope);
-
-            // Add a task to merge the jni libs folders
-            createMergeJniLibFoldersTasks(variantScope);
-
-            // Add feature related tasks if necessary
-            if (variantScope.getType().isBaseModule()) {
-                // Base feature specific tasks.
-                taskFactory.register(new FeatureSetMetadataWriterTask.CreationAction(variantScope));
-
-                createValidateSigningTask(variantScope);
-                // Add a task to produce the signing config file.
-                taskFactory.register(new SigningConfigWriterTask.CreationAction(variantScope));
-
-                if (extension.getDataBinding().isEnabled()) {
-                    // Create a task that will package the manifest ids(the R file packages) of all
-                    // features into a file. This file's path is passed into the Data Binding annotation
-                    // processor which uses it to known about all available features.
-                    //
-                    // <p>see: {@link TaskManager#setDataBindingAnnotationProcessorParams(VariantScope)}
-                    taskFactory.register(
-                            new DataBindingExportFeatureApplicationIdsTask.CreationAction(
-                                    variantScope));
-
-                }
-            } else {
-                // Non-base feature specific task.
-                // Task will produce artifacts consumed by the base feature
-                taskFactory.register(new FeatureSplitDeclarationWriterTask.CreationAction(variantScope));
-                if (extension.getDataBinding().isEnabled()) {
-                    // Create a task that will package necessary information about the feature into a
-                    // file which is passed into the Data Binding annotation processor.
-                    taskFactory.register(
-                            new DataBindingExportFeatureInfoTask.CreationAction(variantScope));
-                }
-                taskFactory.register(new MergeConsumerProguardFilesTask.CreationAction(variantScope));
-            }
-
-            // Add data binding tasks if enabled
-            createDataBindingTasksIfNecessary(variantScope, MergeType.MERGE);
-
-            // Add a compile task
-            createCompileTask(variantScope);
-
-            createStripNativeLibraryTask(taskFactory, variantScope);
-
-            if (variantScope.getVariantData().getMultiOutputPolicy().equals(MultiOutputPolicy.SPLITS)) {
-                if (extension.getBuildToolsRevision().getMajor() < 21) {
-                    throw new RuntimeException(
-                            "Pure splits can only be used with buildtools 21 and later");
-                }
-
-                createSplitTasks(variantScope);
-            }
-
-            createPackagingTask(variantScope);
-
-            maybeCreateLintVitalTask((ApkVariantData) variantScope.getVariantData(), variantScopesForLint);
-
-            // Create the lint tasks, if enabled
-            createLintTasks(variantScope, variantScopesForLint);
-
-            taskFactory.register(new FeatureSplitTransitiveDepsWriterTask.CreationAction(variantScope));
-
-            createDynamicBundleTask(variantScope);
-        }
-    }
-
-    //ApiObjectFactory.java
-    //此时已完成构建变体任务的初始化
-    public BaseVariantImpl create(BaseVariantData variantData) {
-        //测试变体
-        if (variantData.getType().isTestComponent()) {
-            .....
-        }
-
-        BaseVariantImpl variantApi =
-                variantFactory.createVariantApi(
-                        objectFactory,
-                        variantData,
-                        readOnlyObjectProvider);
-        if (variantApi == null) {
-            return null;
-        }
-
-        //如果需要构建测试
-        if (variantFactory.hasTestScope()) {
-            ........
-        }
-
-        createVariantOutput(variantData, variantApi);
-
-        try {
-            // Only add the variant API object to the domain object set once it's been fully initialized.
-            extension.addVariant(variantApi);
-        } catch (Throwable t) {
-            // Adding variant to the collection will trigger user-supplied callbacks
-            throw new ExternalApiUsageException(t);
-        }
-
-        return variantApi;
     }
 }
 ```
+
+
+
+
+
+
+
+
+
+
+
+### APK 打包过程中的主要 Task 源码分析
+#### 1. processDebugManifest
+
+在 `createTasksForVariantScope` 中通过 `createMergeApkManifestsTask` 方法创建。
+
+使用 `TaskFactory.register` 将 `ProcessApplicationManifest.CreationAction` 转换成了 `Task`，因此主要在 `ProcessApplicationManifest.CreationAction` 中处理 `Manifest` 文件
+```java
+//TaskManager.java
+public void createMergeApkManifestsTask(@NonNull VariantScope variantScope) {
+    AndroidArtifactVariantData androidArtifactVariantData = (AndroidArtifactVariantData) variantScope.getVariantData();
+    Set<String> screenSizes = androidArtifactVariantData.getCompatibleScreens();
+
+    taskFactory.register(new CompatibleScreensManifest.CreationAction(variantScope, screenSizes));
+
+    TaskProvider<? extends ManifestProcessorTask> processManifestTask = createMergeManifestTask(variantScope);
+
+    final MutableTaskContainer taskContainer = variantScope.getTaskContainer();
+    if (taskContainer.getMicroApkTask() != null) {
+        TaskFactoryUtils.dependsOn(processManifestTask, taskContainer.getMicroApkTask());
+    }
+}
+
+
+//TaskManager.java
+@NonNull
+protected TaskProvider<? extends ManifestProcessorTask> createMergeManifestTask(@NonNull VariantScope variantScope) {
+    return taskFactory.register(new ProcessApplicationManifest.CreationAction(
+                    variantScope.getVariantData().getPublicVariantPropertiesApi(),
+                    !getAdvancedProfilingTransforms(projectOptions).isEmpty()));
+}
+```
+
+
+`ProcessApplicationManifest.CreationAction` 继承自 `VariantTaskCreationAction<ProcessApplicationManifest>`，处理 Manifest 文件的核心代码在 `ProcessApplicationManifest.doFullTaskAction()` 中
+
+`ProcessApplicationManifest` 的类声明如下：
+`public abstract class ProcessApplicationManifest extends ManifestProcessorTask `
+`public abstract class ManifestProcessorTask extends IncrementalTask`
+
+```java
+//ProcessApplicationManifest.java
+@Override
+protected void doFullTaskAction() throws IOException {
+    // read the output of the compatible screen manifest.
+    BuildElements compatibleScreenManifests = ExistingBuildElements.from(
+                    InternalArtifactType.COMPATIBLE_SCREEN_MANIFEST.INSTANCE,
+                    getCompatibleScreensManifest().get().getAsFile());
+
+    ModuleMetadata moduleMetadata = null;
+    if (packageManifest != null && !packageManifest.isEmpty()) {
+        moduleMetadata = ModuleMetadata.load(packageManifest.getSingleFile());
+        boolean isDebuggable = getOptionalFeatures().get().contains(Feature.DEBUGGABLE);
+        if (moduleMetadata.getDebuggable() != isDebuggable) {
+            String errorMessage =
+                    String.format(
+                            "Dynamic Feature '%1$s' (build type '%2$s') %3$s debuggable,\n"
+                                    + "and the corresponding build type in the base "
+                                    + "application %4$s debuggable.\n"
+                                    + "Recommendation: \n"
+                                    + "   in  %5$s\n"
+                                    + "   set android.buildTypes.%2$s.debuggable = %6$s",
+                            getProject().getPath(),
+                            buildTypeName,
+                            isDebuggable ? "is" : "is not",
+                            moduleMetadata.getDebuggable() ? "is" : "is not",
+                            getProject().getBuildFile(),
+                            moduleMetadata.getDebuggable() ? "true" : "false");
+            throw new InvalidUserDataException(errorMessage);
+        }
+    }
+
+
+    @Nullable BuildOutput compatibleScreenManifestForSplit;
+
+    ImmutableList.Builder<BuildOutput> mergedManifestOutputs = ImmutableList.builder();
+    ImmutableList.Builder<BuildOutput> metadataFeatureMergedManifestOutputs =
+            ImmutableList.builder();
+    ImmutableList.Builder<BuildOutput> bundleManifestOutputs = ImmutableList.builder();
+    ImmutableList.Builder<BuildOutput> instantAppManifestOutputs = ImmutableList.builder();
+
+    List<File> navJsons =
+            navigationJsons == null
+                    ? Collections.emptyList()
+                    : Lists.newArrayList(navigationJsons);
+    // FIX ME : multi threading.
+    for (ApkData apkData : getApkDataList().get()) {
+        compatibleScreenManifestForSplit = compatibleScreenManifests.element(apkData);
+        File manifestOutputFile =
+                new File(
+                        getManifestOutputDirectory().get().getAsFile(),
+                        FileUtils.join(apkData.getDirName(), ANDROID_MANIFEST_XML));
+
+        File metadataFeatureManifestOutputFile =
+                FileUtils.join(
+                        getMetadataFeatureManifestOutputDirectory().get().getAsFile(),
+                        apkData.getDirName(),
+                        ANDROID_MANIFEST_XML);
+
+        File bundleManifestOutputFile =
+                FileUtils.join(
+                        getBundleManifestOutputDirectory().get().getAsFile(),
+                        apkData.getDirName(),
+                        ANDROID_MANIFEST_XML);
+
+        File instantAppManifestOutputFile =
+                getInstantAppManifestOutputDirectory().isPresent()
+                        ? FileUtils.join(
+                                getInstantAppManifestOutputDirectory().get().getAsFile(),
+                                apkData.getDirName(),
+                                ANDROID_MANIFEST_XML)
+                        : null;
+
+        MergingReport mergingReport =
+                ManifestHelperKt.mergeManifestsForApplication(
+                        getMainManifest().get(),
+                        manifestOverlays.get(),
+                        computeFullProviderList(compatibleScreenManifestForSplit),
+                        navJsons,
+                        getFeatureName().getOrNull(),
+                        moduleMetadata == null
+                                ? packageOverride.getOrNull()
+                                : moduleMetadata.getApplicationId(),
+                        moduleMetadata == null
+                                ? apkData.getVersionCode()
+                                : Integer.parseInt(moduleMetadata.getVersionCode()),
+                        moduleMetadata == null
+                                ? apkData.getVersionName()
+                                : moduleMetadata.getVersionName(),
+                        getMinSdkVersion().getOrNull(),
+                        getTargetSdkVersion().getOrNull(),
+                        getMaxSdkVersion().getOrNull(),
+                        manifestOutputFile.getAbsolutePath(),
+                        // no aapt friendly merged manifest file necessary for applications.
+                        null /* aaptFriendlyManifestOutputFile */,
+                        metadataFeatureManifestOutputFile.getAbsolutePath(),
+                        bundleManifestOutputFile.getAbsolutePath(),
+                        instantAppManifestOutputFile != null
+                                ? instantAppManifestOutputFile.getAbsolutePath()
+                                : null,
+                        ManifestMerger2.MergeType.APPLICATION,
+                        manifestPlaceholders.get(),
+                        getOptionalFeatures().get(),
+                        getDependencyFeatureNames(),
+                        getReportFile().get().getAsFile(),
+                        LoggerWrapper.getLogger(ProcessApplicationManifest.class));
+
+        XmlDocument mergedXmlDocument =
+                mergingReport.getMergedXmlDocument(MergingReport.MergedManifestKind.MERGED);
+
+        outputMergeBlameContents(mergingReport, getMergeBlameFile().get().getAsFile());
+
+        ImmutableMap<String, String> properties =
+                mergedXmlDocument != null
+                        ? ImmutableMap.of(
+                                "packageId",
+                                mergedXmlDocument.getPackageName(),
+                                "split",
+                                mergedXmlDocument.getSplitName(),
+                                SdkConstants.ATTR_MIN_SDK_VERSION,
+                                mergedXmlDocument.getMinSdkVersion())
+                        : ImmutableMap.of();
+
+        mergedManifestOutputs.add(
+                new BuildOutput(
+                        InternalArtifactType.MERGED_MANIFESTS.INSTANCE,
+                        apkData,
+                        manifestOutputFile,
+                        properties));
+
+        metadataFeatureMergedManifestOutputs.add(
+                new BuildOutput(
+                        InternalArtifactType.METADATA_FEATURE_MANIFEST.INSTANCE,
+                        apkData,
+                        metadataFeatureManifestOutputFile));
+        bundleManifestOutputs.add(
+                new BuildOutput(
+                        InternalArtifactType.BUNDLE_MANIFEST.INSTANCE,
+                        apkData,
+                        bundleManifestOutputFile,
+                        properties));
+        if (instantAppManifestOutputFile != null) {
+            instantAppManifestOutputs.add(
+                    new BuildOutput(
+                            InternalArtifactType.INSTANT_APP_MANIFEST.INSTANCE,
+                            apkData,
+                            instantAppManifestOutputFile,
+                            properties));
+        }
+    }
+    new BuildElements(
+                    BuildElements.METADATA_FILE_VERSION,
+                    getApplicationId().get(),
+                    getVariantType().get(),
+                    mergedManifestOutputs.build())
+            .save(getManifestOutputDirectory());
+    new BuildElements(
+                    BuildElements.METADATA_FILE_VERSION,
+                    getApplicationId().get(),
+                    getVariantType().get(),
+                    metadataFeatureMergedManifestOutputs.build())
+            .save(getMetadataFeatureManifestOutputDirectory());
+    new BuildElements(
+                    BuildElements.METADATA_FILE_VERSION,
+                    getApplicationId().get(),
+                    getVariantType().get(),
+                    bundleManifestOutputs.build())
+            .save(getBundleManifestOutputDirectory());
+
+    if (getInstantAppManifestOutputDirectory().isPresent()) {
+        new BuildElements(
+                        BuildElements.METADATA_FILE_VERSION,
+                        getApplicationId().get(),
+                        getVariantType().get(),
+                        instantAppManifestOutputs.build())
+                .save(getInstantAppManifestOutputDirectory());
+    }
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 //调用 D8.run(builder.build(), MoreExecutors.newDirectExecutorService())，生成 Dex 文件
 Dex 编译过程 {
