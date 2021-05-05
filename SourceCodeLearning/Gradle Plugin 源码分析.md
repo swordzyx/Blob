@@ -1144,7 +1144,124 @@ protected TaskProvider<? extends ManifestProcessorTask> createMergeManifestTask(
 `public abstract class ProcessApplicationManifest extends ManifestProcessorTask `
 `public abstract class ManifestProcessorTask extends IncrementalTask`
 
+
+
+##### （1）配置阶段
 ```java
+//设置 Task 的基本配置信息，例如输入以及输出，构建类型等等。
+//ProcessApplicationManifest.java
+@Override
+public void configure(@NonNull ProcessApplicationManifest task) {
+    super.configure(task);
+
+    final VariantScope variantScope = getVariantScope();
+    final VariantDslInfo variantDslInfo = variantScope.getVariantDslInfo();
+    final VariantSources variantSources = variantScope.getVariantSources();
+    final GlobalScope globalScope = variantScope.getGlobalScope();
+
+    VariantType variantType = variantScope.getType();
+
+    Project project = globalScope.getProject();
+
+    // This includes the dependent libraries.
+    task.manifests = variantScope.getArtifactCollection(RUNTIME_CLASSPATH, ALL, MANIFEST);
+
+    // Also include rewritten auto-namespaced manifests if there are any
+    if (variantType.isBaseModule() // TODO(b/112251836): Auto namespacing for dynamic features.
+            && globalScope.getExtension().getAaptOptions().getNamespaced()
+            && globalScope.getProjectOptions().get(BooleanOption.CONVERT_NON_NAMESPACED_DEPENDENCIES)) {
+        variantScope
+                .getArtifacts()
+                .setTaskInputToFinalProduct(
+                        InternalArtifactType.NAMESPACED_MANIFESTS.INSTANCE,
+                        task.getAutoNamespacedManifests());
+    }
+
+    // optional manifest files too.
+    if (variantScope.getTaskContainer().getMicroApkTask() != null
+            && variantDslInfo.isEmbedMicroApp()) {
+        task.microApkManifest = project.files(variantScope.getMicroApkManifestFile());
+    }
+    BuildArtifactsHolder artifacts = variantScope.getArtifacts();
+    artifacts.setTaskInputToFinalProduct(
+            InternalArtifactType.COMPATIBLE_SCREEN_MANIFEST.INSTANCE,
+            task.getCompatibleScreensManifest());
+
+    //将 applicationId 设置为在 build.gradle 中设置的 applicationId，并且不允许在修改
+    task.getApplicationId().set(variantScope.getVariantData().getPublicVariantPropertiesApi().getApplicationId());
+    task.getApplicationId().disallowChanges();
+
+    //设置 VariantType，且不允许在修改，分为 base module 和 dynamic feature
+    task.getVariantType().set(variantScope.getVariantData().getType().toString());
+    task.getVariantType().disallowChanges();
+
+    //设置 minSdkVersion，且不允许在修改
+    task.getMinSdkVersion().set(project.provider(() -> variantDslInfo.getMinSdkVersion().getApiString()));
+    task.getMinSdkVersion().disallowChanges();
+
+    //设置 targetS打开Version，且不允许在修改
+    task.getTargetSdkVersion().set(project.provider(() -> {
+            ApiVersion targetSdk = variantDslInfo.getTargetSdkVersion();
+            return targetSdk.getApiLevel() < 1 ? null : targetSdk.getApiString();
+        }));
+    task.getTargetSdkVersion().disallowChanges();
+
+    //设置 maxSdkVersion，且不允许在修改。
+    task.getMaxSdkVersion().set(project.provider(variantDslInfo::getMaxSdkVersion));
+    task.getMaxSdkVersion().disallowChanges();
+
+    task.getOptionalFeatures().set(project.provider(() -> getOptionalFeatures(variantScope, isAdvancedProfilingOn)));
+    task.getOptionalFeatures().disallowChanges();
+
+    variantScope
+            .getVariantData()
+            .getPublicVariantPropertiesApi()
+            .getOutputs()
+            .getEnabledVariantOutputs()
+            .forEach(variantOutput -> task.getApkDataList().add(variantOutput.getApkData()));
+    task.getApkDataList().disallowChanges();
+
+    // set optional inputs per module type
+    if (variantType.isBaseModule()) {
+        task.featureManifests = variantScope.getArtifactCollection(REVERSE_METADATA_VALUES, PROJECT, REVERSE_METADATA_FEATURE_MANIFEST);
+    } else if (variantType.isDynamicFeature()) {//当前 module 时动态功能模块
+        task.getFeatureName().set(variantScope.getFeatureName());
+        task.getFeatureName().disallowChanges();
+
+        task.packageManifest = variantScope.getArtifactFileCollection(COMPILE_CLASSPATH, PROJECT, BASE_MODULE_METADATA);
+
+        task.dependencyFeatureNameArtifacts = variantScope.getArtifactFileCollection(RUNTIME_CLASSPATH, PROJECT, FEATURE_NAME);
+    }
+
+    if (!globalScope.getExtension().getAaptOptions().getNamespaced()) {
+        task.navigationJsons = project.files(
+                        variantScope.getArtifacts().getFinalProduct(InternalArtifactType.NAVIGATION_JSON.INSTANCE),
+                        variantScope.getArtifactFileCollection(RUNTIME_CLASSPATH, ALL, NAVIGATION_JSON));
+    }
+    task.packageOverride.set(componentProperties.getApplicationId());
+    task.packageOverride.disallowChanges();
+
+    task.manifestPlaceholders.set(task.getProject().provider(variantDslInfo::getManifestPlaceholders));
+    task.manifestPlaceholders.disallowChanges();
+
+    //设置清单文件的路ing
+    task.getMainManifest().set(project.provider(variantSources::getMainManifestFilePath));
+    task.getMainManifest().disallowChanges();
+
+    //获取模块下的所有的 AndroidManifest.xml 文件
+    task.manifestOverlays.set(task.getProject().provider(variantSources::getManifestOverlays));
+    task.manifestOverlays.disallowChanges();
+
+    task.isFeatureSplitVariantType = variantDslInfo.getVariantType().isDynamicFeature();
+    task.buildTypeName = variantDslInfo.getComponentIdentity().getBuildType();
+    // TODO: here in the "else" block should be the code path for the namespaced pipeline
+}
+```
+
+
+##### （2）执行阶段
+```java
+//其实就是合并 module 下的各个清单文件，生成一个最终的清单文件
 //ProcessApplicationManifest.java
 @Override
 protected void doFullTaskAction() throws IOException {
@@ -1155,6 +1272,7 @@ protected void doFullTaskAction() throws IOException {
 
     ModuleMetadata moduleMetadata = null;
     if (packageManifest != null && !packageManifest.isEmpty()) {
+        //获取 Manifest 文件的信息。
         moduleMetadata = ModuleMetadata.load(packageManifest.getSingleFile());
         boolean isDebuggable = getOptionalFeatures().get().contains(Feature.DEBUGGABLE);
         if (moduleMetadata.getDebuggable() != isDebuggable) {
@@ -1180,132 +1298,129 @@ protected void doFullTaskAction() throws IOException {
     @Nullable BuildOutput compatibleScreenManifestForSplit;
 
     ImmutableList.Builder<BuildOutput> mergedManifestOutputs = ImmutableList.builder();
-    ImmutableList.Builder<BuildOutput> metadataFeatureMergedManifestOutputs =
-            ImmutableList.builder();
+    ImmutableList.Builder<BuildOutput> metadataFeatureMergedManifestOutputs = ImmutableList.builder();
     ImmutableList.Builder<BuildOutput> bundleManifestOutputs = ImmutableList.builder();
     ImmutableList.Builder<BuildOutput> instantAppManifestOutputs = ImmutableList.builder();
 
-    List<File> navJsons =
-            navigationJsons == null
-                    ? Collections.emptyList()
-                    : Lists.newArrayList(navigationJsons);
+    List<File> navJsons = navigationJsons == null ? Collections.emptyList() : Lists.newArrayList(navigationJsons);
     // FIX ME : multi threading.
     for (ApkData apkData : getApkDataList().get()) {
         compatibleScreenManifestForSplit = compatibleScreenManifests.element(apkData);
-        File manifestOutputFile =
-                new File(
-                        getManifestOutputDirectory().get().getAsFile(),
-                        FileUtils.join(apkData.getDirName(), ANDROID_MANIFEST_XML));
+        //getManifestOutputDirectory()：build/intermediates/merged_manifest/${buildType}${productFlavor}/
+        //ANDROID_MANIFEST_XML = “AndroidManifest.xml”，获取清单文件的输出路径
+        File manifestOutputFile = new File(
+                getManifestOutputDirectory().get().getAsFile(),
+                FileUtils.join(apkData.getDirName(), ANDROID_MANIFEST_XML));
 
-        File metadataFeatureManifestOutputFile =
-                FileUtils.join(
-                        getMetadataFeatureManifestOutputDirectory().get().getAsFile(),
+        //获得功能模块的清单文件的输出路径，功能模块用于 App Bundle 中
+        File metadataFeatureManifestOutputFile = FileUtils.join(
+                getMetadataFeatureManifestOutputDirectory().get().getAsFile(),
+                apkData.getDirName(),
+                ANDROID_MANIFEST_XML);
+
+        //所使用的 bundletool.jar 工具所使用的 AndroidManifest.xml 路径
+        File bundleManifestOutputFile = FileUtils.join(
+                getBundleManifestOutputDirectory().get().getAsFile(),
+                apkData.getDirName(),
+                ANDROID_MANIFEST_XML);
+
+        //构建 Instant App 所使用的清单文件的路径
+        File instantAppManifestOutputFile = getInstantAppManifestOutputDirectory().isPresent() ? FileUtils.join(
+                        getInstantAppManifestOutputDirectory().get().getAsFile(),
                         apkData.getDirName(),
-                        ANDROID_MANIFEST_XML);
+                        ANDROID_MANIFEST_XML) : null;
 
-        File bundleManifestOutputFile =
-                FileUtils.join(
-                        getBundleManifestOutputDirectory().get().getAsFile(),
-                        apkData.getDirName(),
-                        ANDROID_MANIFEST_XML);
+        //合并清单文件，在 mergeManifestsForApplication 中会执行 AndroidManifest.xml 中 placeholder 的替换
+        MergingReport mergingReport = ManifestHelperKt.mergeManifestsForApplication(
+                getMainManifest().get(),//主 AndroidManifest.xml，即 module/src/main/AndroidManifest.xml
+                manifestOverlays.get(), //模块下，除了主 AndroidManifest.xml 之外的其他 AndroidManifest.xml。
+                computeFullProviderList(compatibleScreenManifestForSplit),
+                navJsons,
+                getFeatureName().getOrNull(),
+                moduleMetadata == null ? packageOverride.getOrNull() : moduleMetadata.getApplicationId(),
+                moduleMetadata == null ? apkData.getVersionCode() : Integer.parseInt(moduleMetadata.getVersionCode()),
+                moduleMetadata == null ? apkData.getVersionName() : moduleMetadata.getVersionName(),
+                getMinSdkVersion().getOrNull(),
+                getTargetSdkVersion().getOrNull(),
+                getMaxSdkVersion().getOrNull(),
+                manifestOutputFile.getAbsolutePath(),
+                // no aapt friendly merged manifest file necessary for applications.
+                null /* aaptFriendlyManifestOutputFile */,
+                metadataFeatureManifestOutputFile.getAbsolutePath(),
+                bundleManifestOutputFile.getAbsolutePath(),
+                instantAppManifestOutputFile != null ? instantAppManifestOutputFile.getAbsolutePath() : null,
+                ManifestMerger2.MergeType.APPLICATION,
+                manifestPlaceholders.get(), //这里面保存在在 build.gradle 中通过 “manifestPlaceholders” 声明的键值对，manifestPlaceholders 在配置阶段被设置
+                getOptionalFeatures().get(),
+                getDependencyFeatureNames(),
+                getReportFile().get().getAsFile(),
+                LoggerWrapper.getLogger(ProcessApplicationManifest.class));
 
-        File instantAppManifestOutputFile =
-                getInstantAppManifestOutputDirectory().isPresent()
-                        ? FileUtils.join(
-                                getInstantAppManifestOutputDirectory().get().getAsFile(),
-                                apkData.getDirName(),
-                                ANDROID_MANIFEST_XML)
-                        : null;
+        XmlDocument mergedXmlDocument = mergingReport.getMergedXmlDocument(MergingReport.MergedManifestKind.MERGED);
 
-        MergingReport mergingReport =
-                ManifestHelperKt.mergeManifestsForApplication(
-                        getMainManifest().get(),
-                        manifestOverlays.get(),
-                        computeFullProviderList(compatibleScreenManifestForSplit),
-                        navJsons,
-                        getFeatureName().getOrNull(),
-                        moduleMetadata == null
-                                ? packageOverride.getOrNull()
-                                : moduleMetadata.getApplicationId(),
-                        moduleMetadata == null
-                                ? apkData.getVersionCode()
-                                : Integer.parseInt(moduleMetadata.getVersionCode()),
-                        moduleMetadata == null
-                                ? apkData.getVersionName()
-                                : moduleMetadata.getVersionName(),
-                        getMinSdkVersion().getOrNull(),
-                        getTargetSdkVersion().getOrNull(),
-                        getMaxSdkVersion().getOrNull(),
-                        manifestOutputFile.getAbsolutePath(),
-                        // no aapt friendly merged manifest file necessary for applications.
-                        null /* aaptFriendlyManifestOutputFile */,
-                        metadataFeatureManifestOutputFile.getAbsolutePath(),
-                        bundleManifestOutputFile.getAbsolutePath(),
-                        instantAppManifestOutputFile != null
-                                ? instantAppManifestOutputFile.getAbsolutePath()
-                                : null,
-                        ManifestMerger2.MergeType.APPLICATION,
-                        manifestPlaceholders.get(),
-                        getOptionalFeatures().get(),
-                        getDependencyFeatureNames(),
-                        getReportFile().get().getAsFile(),
-                        LoggerWrapper.getLogger(ProcessApplicationManifest.class));
-
-        XmlDocument mergedXmlDocument =
-                mergingReport.getMergedXmlDocument(MergingReport.MergedManifestKind.MERGED);
-
+        //将合并之后的清单文件输出成 “AndroidManifest.xml” 文件
         outputMergeBlameContents(mergingReport, getMergeBlameFile().get().getAsFile());
 
-        ImmutableMap<String, String> properties =
-                mergedXmlDocument != null
-                        ? ImmutableMap.of(
-                                "packageId",
-                                mergedXmlDocument.getPackageName(),
-                                "split",
-                                mergedXmlDocument.getSplitName(),
-                                SdkConstants.ATTR_MIN_SDK_VERSION,
-                                mergedXmlDocument.getMinSdkVersion())
-                        : ImmutableMap.of();
+        /*
+        *返回一个 Map，里面包含以下元素：{
+        *   "packageId":mergedXmlDocument.getPackageName(), 
+        *   "split":mergedXmlDocument.getSplitName(), 
+        *   SdkConstants.ATTR_MIN_SDK_VERSION:mergedXmlDocument.getMinSdkVersion()
+        *}
+        * 在合并后的清单文件中添加一些内容。
+        */
+        ImmutableMap<String, String> properties = mergedXmlDocument != null ? ImmutableMap.of(
+                "packageId",
+                mergedXmlDocument.getPackageName(),
+                "split",
+                mergedXmlDocument.getSplitName(),
+                SdkConstants.ATTR_MIN_SDK_VERSION,
+                mergedXmlDocument.getMinSdkVersion()) : ImmutableMap.of();
 
-        mergedManifestOutputs.add(
-                new BuildOutput(
-                        InternalArtifactType.MERGED_MANIFESTS.INSTANCE,
-                        apkData,
-                        manifestOutputFile,
-                        properties));
+        //清单文件合并后需要输出的内容
+        mergedManifestOutputs.add(new BuildOutput(
+                InternalArtifactType.MERGED_MANIFESTS.INSTANCE,
+                apkData,
+                manifestOutputFile,
+                properties));
 
-        metadataFeatureMergedManifestOutputs.add(
-                new BuildOutput(
-                        InternalArtifactType.METADATA_FEATURE_MANIFEST.INSTANCE,
-                        apkData,
-                        metadataFeatureManifestOutputFile));
-        bundleManifestOutputs.add(
-                new BuildOutput(
-                        InternalArtifactType.BUNDLE_MANIFEST.INSTANCE,
-                        apkData,
-                        bundleManifestOutputFile,
-                        properties));
+        //功能模块的清单文件合并后应输出的内容
+        metadataFeatureMergedManifestOutputs.add(new BuildOutput(
+                InternalArtifactType.METADATA_FEATURE_MANIFEST.INSTANCE,
+                apkData,
+                metadataFeatureManifestOutputFile));
+
+        //bundletool.jar 使用到的清单文件中应包含的内容
+        bundleManifestOutputs.add(new BuildOutput(
+                InternalArtifactType.BUNDLE_MANIFEST.INSTANCE,
+                apkData,
+                bundleManifestOutputFile,
+                properties));
+
+        //Instant App 的清单文件应包含的内容。
         if (instantAppManifestOutputFile != null) {
-            instantAppManifestOutputs.add(
-                    new BuildOutput(
-                            InternalArtifactType.INSTANT_APP_MANIFEST.INSTANCE,
-                            apkData,
-                            instantAppManifestOutputFile,
-                            properties));
+            instantAppManifestOutputs.add(new BuildOutput(
+                    InternalArtifactType.INSTANT_APP_MANIFEST.INSTANCE,
+                    apkData,
+                    instantAppManifestOutputFile,
+                    properties));
         }
     }
+
+    //封装任务执行完成之后的结果。 针对不同类型的拆分生成相同类型的结果
     new BuildElements(
                     BuildElements.METADATA_FILE_VERSION,
                     getApplicationId().get(),
                     getVariantType().get(),
-                    mergedManifestOutputs.build())
-            .save(getManifestOutputDirectory());
+                    mergedManifestOutputs.build()).save(getManifestOutputDirectory());
+
     new BuildElements(
                     BuildElements.METADATA_FILE_VERSION,
                     getApplicationId().get(),
                     getVariantType().get(),
                     metadataFeatureMergedManifestOutputs.build())
             .save(getMetadataFeatureManifestOutputDirectory());
+
     new BuildElements(
                     BuildElements.METADATA_FILE_VERSION,
                     getApplicationId().get(),
@@ -1325,25 +1440,1102 @@ protected void doFullTaskAction() throws IOException {
 ```
 
 
+### 2. mergeDebugResources
+在 `createTasksForVariantScope` 中通过 `createMergeResourcesTasks` 方法创建。
+
+##### （1）任务创建
+```java
+//ApplicationTaskManager.java
+private void createMergeResourcesTasks(@NonNull VariantScope variantScope) {
+    //对资源进行合并和编译，用于稍后的资源链接
+    createMergeResourcesTask(variantScope, true, Sets.immutableEnumSet(MergeResources.Flag.PROCESS_VECTOR_DRAWABLES));
+
+    //用于测试
+    if (projectOptions.get(BooleanOption.ENABLE_APP_COMPILE_TIME_R_CLASS)
+            && !variantScope.getType().isForTesting()
+            && !variantScope.getGlobalScope().getExtension().getAaptOptions().getNamespaced()) {
+
+        basicCreateMergeResourcesTask(
+                variantScope,
+                MergeType.PACKAGE,
+                variantScope.getIntermediateDir(InternalArtifactType.PACKAGED_RES.INSTANCE),
+                false,
+                false,
+                false,
+                ImmutableSet.of(),
+                null);
+    }
+}
+
+//TaskManager
+public void createMergeResourcesTask(@NonNull VariantScope scope, boolean processResources, ImmutableSet<MergeResources.Flag> flags) {
+
+    //是否输出未编译的资源，用于测试
+    boolean alsoOutputNotCompiledResources = scope.getType().isApk() && !scope.getType().isForTesting() && scope.useResourceShrinker();
+
+    basicCreateMergeResourcesTask(
+            scope,
+            MergeType.MERGE,
+            null /*outputLocation*/,
+            true /*includeDependencies*/,
+            processResources,
+            alsoOutputNotCompiledResources,
+            flags,
+            null /*configCallback*/);
+}
+
+//TaskManager.java
+public TaskProvider<MergeResources> basicCreateMergeResourcesTask(@NonNull VariantScope scope, @NonNull MergeType mergeType, @Nullable File outputLocation, final boolean includeDependencies, final boolean processResources, boolean alsoOutputNotCompiledResources, @NonNull ImmutableSet<MergeResources.Flag> flags, @Nullable TaskProviderCallback<MergeResources> taskProviderCallback) {
+
+    //Task 名称前缀
+    String taskNamePrefix = mergeType.name().toLowerCase(Locale.ENGLISH);
+
+    File mergedNotCompiledDir =
+            alsoOutputNotCompiledResources ? new File(
+                    globalScope.getIntermediatesDir()
+                            + "/merged-not-compiled-resources/"
+                            + scope.getVariantDslInfo().getDirName()) : null;
+
+    //通过 taskFactory.register 从一个 Action 生成对应的 Task
+    TaskProvider<MergeResources> mergeResourcesTask = taskFactory.register(new MergeResources.CreationAction(
+                scope,
+                mergeType,
+                taskNamePrefix,
+                mergedNotCompiledDir,
+                includeDependencies,
+                processResources,
+                flags,
+                isLibrary()), null, null, taskProviderCallback);
+
+    scope.getArtifacts()
+            .producesDir(
+                    mergeType.getOutputType(),
+                    mergeResourcesTask,
+                    MergeResources::getOutputDir,
+                    MoreObjects.firstNonNull(
+                                    outputLocation, scope.getDefaultMergeResourcesOutputDir())
+                            .getAbsolutePath(),
+                    "");
+
+    if (alsoOutputNotCompiledResources) {
+        scope.getArtifacts().producesDir(
+                MERGED_NOT_COMPILED_RES.INSTANCE,
+                mergeResourcesTask,
+                MergeResources::getMergedNotCompiledResourcesOutputDirectory,
+                mergedNotCompiledDir.getAbsolutePath(),
+                "");
+    }
+
+    if (extension.getTestOptions().getUnitTests().isIncludeAndroidResources()) {
+        TaskFactoryUtils.dependsOn(scope.getTaskContainer().getCompileTask(), mergeResourcesTask);
+    }
+
+    return mergeResourcesTask;
+}
+
+```
+
+`MergeResources.CreationAction extends VariantTaskCreationAction<MergeResources>` ，可以看出 `MergeResources.CreationAction` 对应的 Task 是 `MergeResources`，`MergeResources` 的声明如下：
+- `public abstract class MergeResources extends ResourceAwareTask`
+- `abstract class ResourceAwareTask : IncrementalTask()`
+
+这是一个增量 Task，主要看以下三个方法
+- `getIncremental`
+- `doFullTaskAction`
+- `doIncrementalTaskAction`
+
+
+##### （2）执行阶段
+###### isIncremental
+```java
+//MergeResource.java
+@Override
+protected boolean getIncremental() {
+    return true;
+}
+```
+表示 MergeResource 是支持增量编译的，因此会重写 `doIncrementalTaskAction` 方法。
+
+###### doFullTaskAction 
+```java
+//
+@Override
+protected void doFullTaskAction() throws IOException, JAXBException {
+    ResourcePreprocessor preprocessor = getPreprocessor();
+
+    //清空旧的编译输出
+    File destinationDir = getOutputDir().get().getAsFile();
+    FileUtils.cleanOutputDir(destinationDir);
+    if (getDataBindingLayoutInfoOutFolder().isPresent()) {
+        FileUtils.deleteDirectoryContents(getDataBindingLayoutInfoOutFolder().get().getAsFile());
+    }
+
+    //获取 resourceSets，这里面包括了自己的 res 下的资源以及 build/generated/res/rs 目录下的资源
+    List<ResourceSet> resourceSets = getConfiguredResourceSets(preprocessor);
+
+    //创建 ResourceMerger 实例，用于资源合并
+    ResourceMerger merger = new ResourceMerger(getMinSdk().get());
+    MergingLog mergingLog = null;
+    if (blameLogFolder != null) {
+        FileUtils.cleanOutputDir(blameLogFolder);
+        mergingLog = new MergingLog(blameLogFolder);
+    }
+
+    try (WorkerExecutorFacade workerExecutorFacade = getAaptWorkerFacade();
+            //ResourceCompilationService 里面会使用 aapt2
+            ResourceCompilationService resourceCompiler = getResourceProcessor(
+                    getProjectName(),
+                    getPath(),
+                    getAapt2FromMaven(),
+                    workerExecutorFacade,
+                    errorFormatMode,
+                    flags,
+                    processResources,
+                    useJvmResourceCompiler,
+                    getLogger(),
+                    getAapt2DaemonBuildService().get())) {
+
+        Blocks.recordSpan(
+                getProject().getName(),
+                getPath(),
+                GradleBuildProfileSpan.ExecutionType.TASK_EXECUTION_PHASE_1,
+                () -> {
+                    //遍历所有的资源，添加到 resourceMerge 中，之后会对 ResourceMerge 中的资源进行合并
+                    for (ResourceSet resourceSet : resourceSets) {
+                        resourceSet.loadFromFiles(new LoggerWrapper(getLogger()));
+                        merger.addDataSet(resourceSet);
+                    }
+                });
+
+        File publicFile = getPublicFile().isPresent() ? getPublicFile().get().getAsFile() : null;
+        //MergedResourceWriter ，可以看作是资源输出流
+        MergedResourceWriter writer = new MergedResourceWriter(
+                workerExecutorFacade,
+                destinationDir,
+                publicFile,
+                mergingLog,
+                preprocessor,
+                resourceCompiler,
+                getIncrementalFolder(),
+                dataBindingLayoutProcessor,
+                mergedNotCompiledResourcesOutputDirectory,
+                pseudoLocalesEnabled,
+                getCrunchPng());
+
+        Blocks.recordSpan(
+                getProject().getName(),
+                getPath(),
+                GradleBuildProfileSpan.ExecutionType.TASK_EXECUTION_PHASE_2,
+                //对资源进行合并
+                //mergeData 会调用 MergedResourceWriter 的 start，ignoreItemInMerge，removeItem，addItem，end 方法对资源 item 进行处理，资源 item 包含了需要处理的资源，包括 xml 和图片资源。
+                //在 MergedResourceWriter.addItem 方法中会针对每一个 item，都会创建与之对应的 CompileResourceRequest 实例，并将该实例加入到 mCompileResourceRequests 中，这是一个 ConcurrentLinkedQueue 队列。
+                //在 MergedResourceWriter.end 中最终会执行 mResourceCompiler.submitCompile 方法来处理资源，其实就是生成 aapt2 命令去处理资源
+                () -> merger.mergeData(writer, false /*doCleanUp*/));
+
+        Blocks.recordSpan(
+                getProject().getName(),
+                getPath(),
+                GradleBuildProfileSpan.ExecutionType.TASK_EXECUTION_PHASE_3,
+                () -> {
+                    if (dataBindingLayoutProcessor != null) {
+                        dataBindingLayoutProcessor.end();
+                    }
+                });
+
+        Blocks.recordSpan(
+                getProject().getName(),
+                getPath(),
+                GradleBuildProfileSpan.ExecutionType.TASK_EXECUTION_PHASE_4,
+                () -> merger.writeBlobTo(getIncrementalFolder(), writer, false));
+
+    } catch (Exception e) {
+        MergingException.findAndReportMergingException(e, new MessageReceiverImpl(errorFormatMode, getLogger()));
+        try {
+            throw e;
+        } catch (MergingException mergingException) {
+            merger.cleanBlob(getIncrementalFolder());
+            throw new ResourceException(mergingException.getMessage(), mergingException);
+        }
+    } finally {
+        cleanup();
+    }
+}
+```
+
+ResourceMerge 会遍历所有的 Resource Item，然后将需要编译的 item 添加到 MergeResourceWrite 中，通过 MergedResourceWriter.addItem 将待编译的的资源放入一个并发队列中（ConcurrentLinkedQueue），在遍历完成之后执行 MergedResourceWriter.end() ，在这里面会调用 mResourceCompiler.submitCompile 对资源进行编译，其本质就是生成 aapt2 命令去编译资源。
+
+
+###### doIncrementalTaskAction
+```java
+//MergeResources.java
+@Override
+protected void doIncrementalTaskAction(@NonNull Map<File, ? extends FileStatus> changedInputs) throws IOException, JAXBException {
+    ResourcePreprocessor preprocessor = getPreprocessor();
+
+    // create a merger and load the known state.
+    ResourceMerger merger = new ResourceMerger(getMinSdk().get());
+    try {
+        //从缓存中加载编译过的资源
+        if (!merger.loadFromBlob(getIncrementalFolder(), true /*incrementalState*/)) {
+            doFullTaskAction();
+            return;
+        }
+
+        if (precompileDependenciesResources) {
+            changedInputs =
+                    changedInputs
+                            .entrySet()
+                            .stream()
+                            .filter(
+                                    fileEntry ->
+                                            !isFilteredOutLibraryResource(fileEntry.getKey()))
+                            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+            if (changedInputs.isEmpty()) {
+                return;
+            }
+        }
+
+        //获取 ResourceSet
+        for (ResourceSet resourceSet : merger.getDataSets()) {
+            resourceSet.setPreprocessor(preprocessor);
+        }
+
+        //获取所有的资源
+        List<ResourceSet> resourceSets = getConfiguredResourceSets(preprocessor);
+
+        //将获取的资源的状态与之前保存的状态作比较，过滤掉未修改过的资源
+        if (!merger.checkValidUpdate(resourceSets)) {
+            getLogger().info("Changed Resource sets: full task run!");
+            doFullTaskAction();
+            return;
+        }
+
+        for (Map.Entry<File, ? extends FileStatus> entry : changedInputs.entrySet()) {
+            File changedFile = entry.getKey();
+
+            merger.findDataSetContaining(changedFile, fileValidity);
+            if (fileValidity.getStatus() == FileValidity.FileStatus.UNKNOWN_FILE) {
+                doFullTaskAction();
+                return;
+            } else if (fileValidity.getStatus() == FileValidity.FileStatus.VALID_FILE) {
+                if (!fileValidity
+                        .getDataSet()
+                        .updateWith(fileValidity.getSourceFile(), changedFile, entry.getValue(), new LoggerWrapper(getLogger()))) {
+                    getLogger().info(String.format("Failed to process %s event! Full task run", entry.getValue()));
+                    doFullTaskAction();
+                    return;
+                }
+            }
+        }
+
+        MergingLog mergingLog = getBlameLogFolder() != null ? new MergingLog(getBlameLogFolder()) : null;
+
+        try (WorkerExecutorFacade workerExecutorFacade = getAaptWorkerFacade();
+                //获取 ResourceCompilationService，用于编译资源
+                ResourceCompilationService resourceCompiler =
+                        getResourceProcessor(
+                                getProjectName(),
+                                getPath(),
+                                getAapt2FromMaven(),
+                                workerExecutorFacade,
+                                errorFormatMode,
+                                flags,
+                                processResources,
+                                useJvmResourceCompiler,
+                                getLogger(),
+                                getAapt2DaemonBuildService().get())) {
+
+            File publicFile = getPublicFile().isPresent() ? getPublicFile().get().getAsFile() : null;
+
+            MergedResourceWriter writer = new MergedResourceWriter(
+                    workerExecutorFacade,
+                    getOutputDir().get().getAsFile(),
+                    publicFile,
+                    mergingLog,
+                    preprocessor,
+                    resourceCompiler,
+                    getIncrementalFolder(),
+                    dataBindingLayoutProcessor,
+                    mergedNotCompiledResourcesOutputDirectory,
+                    pseudoLocalesEnabled,
+                    getCrunchPng());
+
+            merger.mergeData(writer, false /*doCleanUp*/);
+
+            if (dataBindingLayoutProcessor != null) {
+                dataBindingLayoutProcessor.end();
+            }
+
+            // No exception? Write the known state.
+            merger.writeBlobTo(getIncrementalFolder(), writer, false);
+        }
+    } catch (Exception e) {
+        MergingException.findAndReportMergingException(e, new MessageReceiverImpl(errorFormatMode, getLogger()));
+        try {
+            throw e;
+        } catch (MergingException mergingException) {
+            merger.cleanBlob(getIncrementalFolder());
+            throw new ResourceException(mergingException.getMessage(), mergingException);
+        }
+    } finally {
+        cleanup();
+    }
+}
+```
+增量编译和全量编译的差别并不大，区别在于增量编译获取的是已经被修改过的资源，全量编译获取的是所有的资源
 
 
 
+### 3. DexArchiveBuilderTask
+此 Task 用于将 Class 文件打包成 Dex 文件。它的实现类是 `DexArchiveBuilderTask.java`，该类可以通过 addFile 添加一个 Dex 文件
+
+#### （1）创建
+```java
+//TaskManager.java
+protected void createCompileTask(@NonNull VariantScope variantScope) {
+    TaskProvider<? extends JavaCompile> javacTask = createJavacTask(variantScope);
+    //获取所有 Java 源文件，将 .java 编译成 .class，最后将 .class 转成 .dex
+    addJavacClassesStream(variantScope);
+    setJavaCompilerTask(javacTask, variantScope);
+    createPostCompilationTasks(variantScope);
+}
+
+//TaskManager.java
+public void createPostCompilationTasks(@NonNull final VariantScope variantScope) {
+
+    checkNotNull(variantScope.getTaskContainer().getJavacTask());
+
+    final BaseVariantData variantData = variantScope.getVariantData();
+    final VariantDslInfo variantDslInfo = variantData.getVariantDslInfo();
+
+    TransformManager transformManager = variantScope.getTransformManager();
+
+    //代码混淆
+    taskFactory.register(new MergeGeneratedProguardFilesCreationAction(variantScope));
+
+    // ---- Code Coverage first -----
+    boolean isTestCoverageEnabled = variantDslInfo.isTestCoverageEnabled() && !variantDslInfo.getVariantType().isForTesting();
+    if (isTestCoverageEnabled) {
+        createJacocoTask(variantScope);
+    }
+
+    maybeCreateDesugarTask(variantScope, variantDslInfo.getMinSdkVersion(), transformManager, isTestCoverageEnabled);
+
+    BaseExtension extension = variantScope.getGlobalScope().getExtension();
+
+    // 合并 Java 的资源
+    createMergeJavaResTask(variantScope);
+
+    // ----- External Transforms -----
+    // 应用所有自定义的 Transforms，所以自定义的 Transform 是在这里进行注册，可以指定这些 Transform 所依赖的 Task，并不是执行
+    List<Transform> customTransforms = extension.getTransforms();
+    List<List<Object>> customTransformsDependencies = extension.getTransformsDependencies();
+
+    boolean registeredExternalTransform = false;
+    for (int i = 0, count = customTransforms.size(); i < count; i++) {
+        Transform transform = customTransforms.get(i);
+
+        List<Object> deps = customTransformsDependencies.get(i);
+        registeredExternalTransform |=
+                transformManager.addTransform(
+                        taskFactory,
+                        variantScope,
+                        transform,
+                        null,
+                        task -> {
+                            if (!deps.isEmpty()) {
+                                task.dependsOn(deps);
+                            }
+                        },
+                        taskProvider -> {
+                            // if the task is a no-op then we make assemble task depend on it.
+                            if (transform.getScopes().isEmpty()) {
+                                TaskFactoryUtils.dependsOn(variantScope.getTaskContainer().getAssembleTask(),taskProvider);
+                            }
+                        }).isPresent();
+    }
+
+    // Add a task to create merged runtime classes if this is a dynamic-feature,
+    // or a base module consuming feature jars. Merged runtime classes are needed if code
+    // minification is enabled in a project with features or dynamic-features.
+    if (variantData.getType().isDynamicFeature() || variantScope.consumesFeatureJars()) {
+        taskFactory.register(new MergeClassesTask.CreationAction(variantScope));
+    }
+
+    // ----- Android studio profiling transforms
+    if (appliesCustomClassTransforms(variantScope, projectOptions)) {
+        for (String jar : getAdvancedProfilingTransforms(projectOptions)) {
+            if (jar != null) {
+                transformManager.addTransform(
+                        taskFactory,
+                        variantScope,
+                        new CustomClassTransform(
+                                jar,
+                                packagesCustomClassDependencies(variantScope, projectOptions)));
+            }
+        }
+    }
+
+    // ----- Minify next -----
+    maybeCreateCheckDuplicateClassesTask(variantScope);
+    CodeShrinker shrinker = maybeCreateJavaCodeShrinkerTask(variantScope);
+    if (shrinker == CodeShrinker.R8) {
+        maybeCreateResourcesShrinkerTasks(variantScope);
+        maybeCreateDexDesugarLibTask(variantScope, false);
+        return;
+    }
+
+    // ----- Multi-Dex support
+    DexingType dexingType = variantScope.getDexingType();
+
+    // 启用了分 dex ，且 minSdk >= 21，则强制使用 NATIVE_MULTIDEX 类型的分 dex
+    if (dexingType == DexingType.LEGACY_MULTIDEX) {
+        if (variantScope.getVariantDslInfo().isMultiDexEnabled()
+                && variantScope.getVariantDslInfo().getMinSdkVersionWithTargetDeviceApi().getFeatureLevel()>= 21) {
+            dexingType = DexingType.NATIVE_MULTIDEX;
+        }
+    }
+
+    //如果是 LEGACY_MULTIDEX 类型的分 dex ，则这里返回 true，也就是打出来的 apk 中会有一个主 dex 文件，这种情况下可以指定主 Dex 文件中包含哪些类
+    if (variantScope.getNeedsMainDexList()) {
+        taskFactory.register(new D8MainDexListTask.CreationAction(variantScope, false));
+    }
+
+    //当前 module 是 base module，且定义了动态功能模块，且为 LEGACY_MULTIDEX 类型的分 dex，minSdk >= 21
+    if (variantScope.getNeedsMainDexListForBundle()) {
+        taskFactory.register(new D8MainDexListTask.CreationAction(variantScope, true));
+    }
+
+    //创建 DexArchiveBuildTask，将 class 文件转成 dex 文件
+    createDexTasks(variantScope, dexingType, registeredExternalTransform);
+
+    maybeCreateResourcesShrinkerTasks(variantScope);
+
+    maybeCreateDexSplitterTask(variantScope);
+}
+
+
+private void createDexTasks(@NonNull VariantScope variantScope, @NonNull DexingType dexingType, boolean registeredExternalTransform) {
+    DefaultDexOptions dexOptions;
+    if (variantScope.getVariantData().getType().isTestComponent()) {//测试
+        dexOptions = DefaultDexOptions.copyOf(extension.getDexOptions());
+        dexOptions.setAdditionalParameters(ImmutableList.of());
+    } else {
+        dexOptions = extension.getDexOptions();
+    }
+
+    Java8LangSupport java8SLangSupport = variantScope.getJava8LangSupportType();
+    boolean minified = variantScope.getCodeShrinker() != null;
+    boolean supportsDesugaring =
+            java8SLangSupport == Java8LangSupport.UNUSED
+                    || (java8SLangSupport == Java8LangSupport.D8
+                            && projectOptions.get(
+                                    BooleanOption.ENABLE_DEXING_DESUGARING_ARTIFACT_TRANSFORM));
+    boolean enableDexingArtifactTransform =
+            globalScope.getProjectOptions().get(BooleanOption.ENABLE_DEXING_ARTIFACT_TRANSFORM)
+                    && !registeredExternalTransform
+                    && !minified
+                    && supportsDesugaring
+                    && !appliesCustomClassTransforms(variantScope, projectOptions);
+    FileCache userLevelCache = getUserDexCache(minified, dexOptions.getPreDexLibraries());
+
+    //注册 DexArchiveBuilderTask 任务，将 class 文件转成 dex 文件
+    taskFactory.register(new DexArchiveBuilderTask.CreationAction(dexOptions, enableDexingArtifactTransform, userLevelCache, variantScope));
+
+    maybeCreateDexDesugarLibTask(variantScope, enableDexingArtifactTransform);
+
+    //合并 dex 文件
+    createDexMergingTasks(variantScope, dexingType, enableDexingArtifactTransform);
+}
+```
+
+DexArchiveBuilderTask 任务是在 createCompileTask 中创建，更具体一点，createCompileTask 里面创建了多个任务，包括 java 源代码编译，编译完成之后才创建 DexArchiveBuilderTask 来将 class 文件转成 dex 文件，最后在创建一个 DexMergeringTask 对生成的 Dex 进行合并。
+
+
+#### （2）执行
+
+##### doTaskAction 执行 DexArchiveBuilder
+
+处理 .jar 文件中的 class
+
+```java
+//DexArchiveBuilder.kt
+override fun doTaskAction(inputChanges: InputChanges) {
+    DexArchiveBuilderTaskDelegate(
+        isIncremental = inputChanges.isIncremental,
+
+        projectClasses = projectClasses.files,
+        projectChangedClasses = getChanged(inputChanges, projectClasses),
+        subProjectClasses = subProjectClasses.files,
+        subProjectChangedClasses = getChanged(inputChanges, subProjectClasses),
+        externalLibClasses = externalLibClasses.files,
+        externalLibChangedClasses = getChanged(inputChanges, externalLibClasses),
+        mixedScopeClasses = mixedScopeClasses.files,
+        mixedScopeChangedClasses = getChanged(inputChanges, mixedScopeClasses),
+
+        projectOutputDex = projectOutputDex.asFile.get(),
+        projectOutputKeepRules = projectOutputKeepRules.asFile.orNull,
+        subProjectOutputDex = subProjectOutputDex.asFile.get(),
+        subProjectOutputKeepRules = subProjectOutputKeepRules.asFile.orNull,
+        externalLibsOutputDex = externalLibsOutputDex.asFile.get(),
+        externalLibsOutputKeepRules = externalLibsOutputKeepRules.asFile.orNull,
+        mixedScopeOutputDex = mixedScopeOutputDex.asFile.get(),
+        mixedScopeOutputKeepRules = mixedScopeOutputKeepRules.asFile.orNull,
+
+        dexParams = dexParams.toDexParameters(),
+        dxDexParams = dxDexParams.toDxDexParameters(),
+
+        desugarClasspathChangedClasses = getChanged(
+            inputChanges,
+            dexParams.desugarClasspath
+        ),
+
+        incrementalDexingV2 = incrementalDexingV2.get(),
+        desugarGraphDir = desugarGraphDir.get().asFile.takeIf { incrementalDexingV2.get() },
+
+        projectVariant = projectVariant.get(),
+        inputJarHashesFile = inputJarHashesFile.get().asFile,
+        dexer = dexer.get(),
+        numberOfBuckets = numberOfBuckets.get(),
+        useGradleWorkers = useGradleWorkers.get(),
+        workerExecutor = workerExecutor,
+        userLevelCache = userLevelCache,
+        messageReceiver = MessageReceiverImpl(dexParams.errorFormatMode.get(), logger)
+    ).doProcess()
+}
+
+
+//DexArchiveBuilderTaskDelegate.kt
+fun doProcess() {
+    if (dxDexParams.dxNoOptimizeFlagPresent) {
+        loggerWrapper.warning(DefaultDexOptions.OPTIMIZE_WARNING)
+    }
+
+    loggerWrapper.verbose("Dex builder is incremental : %b ", isIncremental)
+
+    // impactedFiles is not null iff !isImpactedFilesComputedLazily
+    val impactedFiles: Set<File>? =
+        if (isImpactedFilesComputedLazily) {
+            null
+        } else {
+            if (dexParams.withDesugaring) {
+                desugarIncrementalHelper!!.additionalPaths.map { it.toFile() }.toSet()
+            } else {
+                emptySet()
+            }
+        }
+
+    try {
+        Closer.create().use { closer ->
+            val classpath = getClasspath(dexParams.withDesugaring)
+            val bootclasspath = getBootClasspath(dexParams.desugarBootclasspath, dexParams.withDesugaring)
+
+            val bootClasspathProvider = ClassFileProviderFactory(bootclasspath)
+            closer.register(bootClasspathProvider)
+            val libraryClasspathProvider = ClassFileProviderFactory(classpath)
+            closer.register(libraryClasspathProvider)
+
+            val bootclasspathServiceKey = ClasspathServiceKey(bootClasspathProvider.id)
+            val classpathServiceKey = ClasspathServiceKey(libraryClasspathProvider.id)
+            sharedState.registerServiceAsCloseable(bootclasspathServiceKey, bootClasspathProvider).also { closer.register(it) }
+
+            sharedState.registerServiceAsCloseable(classpathServiceKey, libraryClasspathProvider).also { closer.register(it) }
+
+            val processInputType = { classes: Set<File>,
+                changedClasses: Set<FileChange>,
+                outputDir: File,
+                outputKeepRules: File?,
+                desugarGraphDir: File?, // Not null iff impactedFiles == null
+                useAndroidBuildCache: Boolean,
+                cacheableDexes: MutableList<DexArchiveBuilderCacheHandler.CacheableItem>?,
+                cacheableKeepRules: MutableList<DexArchiveBuilderCacheHandler.CacheableItem>? ->
+                processClassFromInput(
+                    inputFiles = classes,
+                    inputFileChanges = changedClasses,
+                    outputDir = outputDir,
+                    outputKeepRules = outputKeepRules,
+                    impactedFiles = impactedFiles,
+                    desugarGraphDir = desugarGraphDir,
+                    bootClasspathKey = bootclasspathServiceKey,
+                    bootClasspath = bootclasspath,
+                    classpathKey = classpathServiceKey,
+                    classpath = classpath,
+                    enableCaching = useAndroidBuildCache,
+                    cacheableDexes = cacheableDexes,
+                    cacheableKeepRules = cacheableKeepRules
+                )
+            }
+            processInputType(
+                projectClasses,
+                projectChangedClasses,
+                projectOutputDex,
+                projectOutputKeepRules,
+                desugarGraphDir?.resolve("currentProject").takeIf { impactedFiles == null },
+                false, // useAndroidBuildCache
+                null, // cacheableDexes
+                null // cacheableKeepRules
+            )
+            //处理子 project 下的 class 文件
+            processInputType(
+                subProjectClasses,
+                subProjectChangedClasses,
+                subProjectOutputDex,
+                subProjectOutputKeepRules,
+                desugarGraphDir?.resolve("otherProjects").takeIf { impactedFiles == null },
+                false, // useAndroidBuildCache
+                null, // cacheableDexes
+                null // cacheableKeepRules
+            )
+            processInputType(
+                mixedScopeClasses,
+                mixedScopeChangedClasses,
+                mixedScopeOutputDex,
+                mixedScopeOutputKeepRules,
+                desugarGraphDir?.resolve("mixedScopes").takeIf { impactedFiles == null },
+                false, // useAndroidBuildCache
+                null, // cacheableDexes
+                null // cacheableKeepRules
+            )
+            // Caching is currently not supported when isImpactedFilesComputedLazily == true
+            val enableCachingForExternalLibs = !isImpactedFilesComputedLazily
+            val cacheableDexes: MutableList<DexArchiveBuilderCacheHandler.CacheableItem>? =
+                mutableListOf<DexArchiveBuilderCacheHandler.CacheableItem>().takeIf { enableCachingForExternalLibs }
+            val cacheableKeepRules: MutableList<DexArchiveBuilderCacheHandler.CacheableItem>? =
+                mutableListOf<DexArchiveBuilderCacheHandler.CacheableItem>().takeIf { enableCachingForExternalLibs }
+            val shrinkDesugarLibrary = externalLibsOutputKeepRules != null
+            //处理依赖库中的 class 
+            processInputType(
+                externalLibClasses,
+                externalLibChangedClasses,
+                externalLibsOutputDex,
+                externalLibsOutputKeepRules,
+                desugarGraphDir?.resolve("externalLibs").takeIf { impactedFiles == null },
+                enableCachingForExternalLibs,
+                cacheableDexes,
+                cacheableKeepRules
+            )
+
+            // all work items have been submitted, now wait for completion.
+            if (useGradleWorkers) {
+                workerExecutor.await()
+            } else {
+                executor.waitForTasksWithQuickFail<Any>(true)
+            }
+
+            // and finally populate the caches.
+            if (cacheableDexes != null && cacheableDexes.isNotEmpty()) {
+                cacheHandler.populateDexCache(cacheableDexes, shrinkDesugarLibrary)
+            }
+            if (cacheableKeepRules != null && cacheableKeepRules.isNotEmpty()) {
+                cacheHandler.populateKeepRuleCache(
+                    cacheableKeepRules,
+                    shrinkDesugarLibrary
+                )
+            }
+
+            loggerWrapper.verbose("Done with all dex archive conversions");
+        }
+    } catch (e: Exception) {
+        PluginCrashReporter.maybeReportException(e)
+        loggerWrapper.error(null, Throwables.getStackTraceAsString(e))
+        throw e
+    }
+}
 
 
 
+private fun processClassFromInput(inputFiles: Set<File>, inputFileChanges: Set<FileChange>, outputDir: File, outputKeepRules: File?, impactedFiles: Set<File>?, desugarGraphDir: File?, bootClasspathKey: ClasspathServiceKey, bootClasspath: List<Path>, classpathKey: ClasspathServiceKey, classpath: List<Path>, enableCaching: Boolean, cacheableDexes: MutableList<DexArchiveBuilderCacheHandler.CacheableItem>?, cacheableKeepRules: MutableList<DexArchiveBuilderCacheHandler.CacheableItem>? ) {
+
+    //全量编译，清除所有的缓存
+    if (!isIncremental) {
+        FileUtils.cleanOutputDir(outputDir)
+        outputKeepRules?.let { FileUtils.cleanOutputDir(it) }
+        desugarGraphDir?.let { FileUtils.cleanOutputDir(it) }
+    } else {
+        removeChangedJarOutputs(
+            inputFiles,
+            inputFileChanges,
+            impactedFiles ?: emptySet(),
+            outputDir
+        )
+        deletePreviousOutputsFromDirs(inputFileChanges, outputDir)
+    }
+
+    val (directoryInputs, jarInputs) = inputFiles.filter { it.exists() }.partition { it.isDirectory }
+
+    if (directoryInputs.isNotEmpty()) {
+        directoryInputs.forEach { loggerWrapper.verbose("Processing input %s", it.toString()) }
+        //将目录下的 class 转成 dex
+        convertToDexArchive(
+            inputs = DirectoryBucketGroup(directoryInputs, numberOfBuckets),
+            outputDir = outputDir,
+            isIncremental = isIncremental,
+            bootClasspath = bootClasspathKey,
+            classpath = classpathKey,
+            changedFiles = changedFiles,
+            impactedFiles = impactedFiles,
+            desugarGraphDir = desugarGraphDir,
+            outputKeepRulesDir = outputKeepRules
+        )
+    }
+
+    for (input in jarInputs) {
+        loggerWrapper.verbose("Processing input %s", input.toString())
+        check(input.extension == SdkConstants.EXT_JAR) { "Expected jar, received $input" }
+
+        val cacheInfo = if (enableCaching) {
+            getD8DesugaringCacheInfo(desugarIncrementalHelper, bootClasspath, classpath, input)
+        } else {
+            DesugaringDontCache
+        }
+
+        //将 jar 中的 class 转成 dex
+        val dexOutputs = convertJarToDexArchive(
+            isIncremental = isIncremental,
+            jarInput = input,
+            outputDir = outputDir,
+            bootclasspath = bootClasspathKey,
+            classpath = classpathKey,
+            changedFiles = changedFiles,
+            impactedFiles = impactedFiles,
+            desugarGraphDir = desugarGraphDir,
+            cacheInfo = cacheInfo,
+            outputKeepRulesDir = outputKeepRules
+        )
+        if (cacheInfo != DesugaringDontCache && dexOutputs.dexes.isNotEmpty()) {
+            cacheableDexes!!.add(DexArchiveBuilderCacheHandler.CacheableItem(input, dexOutputs.dexes, cacheInfo.orderedD8DesugaringDependencies))
+            if (dexOutputs.keepRules.isNotEmpty()) {
+                cacheableKeepRules!!.add(
+                    DexArchiveBuilderCacheHandler.CacheableItem(
+                        input,
+                        dexOutputs.keepRules,
+                        cacheInfo.orderedD8DesugaringDependencies
+                    )
+                )
+            }
+        }
+    }
+}
+
+```
+
+DexArchiveBuilderTask 会按照两种情况处理 class 文件，一种是处理目录下的 class 文件，另一种是处理 .jar 中的 class 文件。 .jar 一般是依赖库，一般不会改变，因此 gradle 会缓存从 .jar 中生成的 dex 文件，用于重用。
 
 
+##### convertJarToDexArchive
 
 
+```java
+private fun convertJarToDexArchive(isIncremental: Boolean, jarInput: File, outputDir: File, bootclasspath: ClasspathServiceKey, classpath: ClasspathServiceKey, changedFiles: Set<File>, impactedFiles: Set<File>?, desugarGraphDir: File?, cacheInfo: D8DesugaringCacheInfo, outputKeepRulesDir: File?
+): DexOutputs {
+    if (isImpactedFilesComputedLazily) {
+        check(impactedFiles == null)
+        return convertToDexArchive(
+            inputs = JarBucketGroup(jarInput, numberOfBuckets),
+            outputDir = outputDir,
+            isIncremental = isIncremental,
+            bootClasspath = bootclasspath,
+            classpath = classpath,
+            changedFiles = changedFiles,
+            impactedFiles = null,
+            desugarGraphDir = desugarGraphDir,
+            outputKeepRulesDir = outputKeepRulesDir
+        )
+    } else {
+        // This is the case where the set of impactedFiles was precomputed, so dexing
+        // avoidance and caching is possible.
+        checkNotNull(impactedFiles)
+        if (isIncremental && jarInput !in changedFiles && jarInput !in impactedFiles) {
+            return DexOutputs()
+        }
+
+        if (cacheInfo !== DesugaringDontCache) {
+            val shrinkDesugarLibrary = outputKeepRulesDir != null
+            val cachedDex = cacheHandler.getCachedDexIfPresent(jarInput, cacheInfo.orderedD8DesugaringDependencies, shrinkDesugarLibrary)
+            val cachedKeepRule = cacheHandler.getCachedKeepRuleIfPresent(jarInput, cacheInfo.orderedD8DesugaringDependencies, shrinkDesugarLibrary)
+
+            if (outputKeepRulesDir == null) {
+                if (cachedDex != null) {
+                    val outputFile = getDexOutputForJar(jarInput, outputDir, null)
+                    Files.copy(cachedDex.toPath(), outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                    return DexOutputs()
+                }
+            } else {
+                if ((cachedDex == null) xor (cachedKeepRule == null)) {
+                    loggerWrapper.warning("One of the cached dex outputs is missing. Re-dex without using existing cached outputs.")
+                }
+                //有缓存，则直接获取缓存的 jar 
+                if (cachedDex != null && cachedKeepRule != null) {
+                    val outputFile = getDexOutputForJar(jarInput, outputDir, null)
+                    Files.copy(cachedDex.toPath(), outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                    FileUtils.copyDirectory(cachedKeepRule, outputKeepRulesDir)
+                    return DexOutputs()
+                }
+            }
+        }
+        //没有缓存，则通过 convertToDexArchive 生成 Dex
+        return convertToDexArchive(
+            inputs = JarBucketGroup(jarInput, numberOfBuckets),
+            outputDir = outputDir,
+            isIncremental = false,
+            bootClasspath = bootclasspath,
+            classpath = classpath,
+            changedFiles = setOf(),
+            impactedFiles = setOf(),
+            desugarGraphDir = null,
+            outputKeepRulesDir = outputKeepRulesDir
+        )
+    }
+}
+
+//对目录下的 class 文件的处理最终也会执行此方法
+private fun convertToDexArchive(inputs: ClassBucketGroup, outputDir: File, isIncremental: Boolean, bootClasspath: ClasspathServiceKey, classpath: ClasspathServiceKey, changedFiles: Set<File>, impactedFiles: Set<File>?, desugarGraphDir: File?, outputKeepRulesDir: File?): DexOutputs {
+
+    inputs.getRoots().forEach { loggerWrapper.verbose("Dexing ${it.absolutePath}") }
+
+    //获取 Dex 输出目录
+    val dexOutputs = DexOutputs()
+    for (bucketId in 0 until numberOfBuckets) {
+        val dexPerClass = inputs is DirectoryBucketGroup && outputKeepRulesDir == null
+
+        //创建存放 Dex 的目录，与 java 源文件或者 jar 的目录结构一致
+        val preDexOutputFile = when (inputs) {
+            is DirectoryBucketGroup -> {
+                if (dexPerClass) {
+                    outputDir.also { FileUtils.mkdirs(it) }
+                } else {
+                    outputDir.resolve(bucketId.toString()).also { FileUtils.mkdirs(it) }
+                }
+            }
+            is JarBucketGroup -> {
+                getDexOutputForJar(inputs.jarFile, outputDir, bucketId).also { FileUtils.mkdirs(it.parentFile) }
+            }
+        }
+
+        val outputKeepRuleFile = outputKeepRulesDir?.let { outputKeepRuleDir ->
+            when (inputs) {
+                is DirectoryBucketGroup -> outputKeepRuleDir.resolve(bucketId.toString())
+                is JarBucketGroup ->  getKeepRulesOutputForJar(inputs.jarFile, outputKeepRuleDir, bucketId)
+            }.also {
+                FileUtils.mkdirs(it.parentFile)
+                it.createNewFile()
+            }
+        }
+
+        dexOutputs.addDex(preDexOutputFile)
+        val classBucket = ClassBucket(inputs, bucketId)
+        outputKeepRuleFile?.let { dexOutputs.addKeepRule(it) }
+        val parameters = DexWorkActionParams(
+            dexer = dexer,
+            dexSpec = IncrementalDexSpec(
+                inputClassFiles = classBucket,
+                outputPath = preDexOutputFile,
+                dexParams = dexParams.toDexParametersForWorkers(
+                    dexPerClass,
+                    bootClasspath,
+                    classpath,
+                    outputKeepRuleFile
+                ),
+                isIncremental = isIncremental,
+                changedFiles = changedFiles,
+                impactedFiles = impactedFiles,
+                desugarGraphFile = if (impactedFiles == null) {
+                    getDesugarGraphFile(desugarGraphDir!!, classBucket)
+                } else {
+                    null
+                }
+            ),
+            dxDexParams = dxDexParams
+        )
+
+        //useGradleWorkers 默认为 true，因此默认创建一个 DexWorkActon 执行 Dex 转换
+        if (useGradleWorkers) {
+            workerExecutor.submit(DexWorkAction::class.java) { configuration ->
+                configuration.isolationMode = IsolationMode.NONE
+                configuration.setParams(parameters)
+            }
+        } else {
+            executor.execute<Any> {
+                val outputHandler = ParsingProcessOutputHandler(
+                    ToolOutputParser(DexParser(), Message.Kind.ERROR, loggerWrapper),
+                    ToolOutputParser(DexParser(), loggerWrapper),
+                    messageReceiver
+                )
+                var output: ProcessOutput? = null
+                try {
+                    outputHandler.createOutput().use {
+                        output = it
+                        launchProcessing(
+                            parameters,
+                            output!!.standardOutput,
+                            output!!.errorOutput,
+                            messageReceiver
+                        )
+                    }
+                } finally {
+                    output?.let {
+                        try {
+                            outputHandler.handleOutput(it)
+                        } catch (e: ProcessException) {
+                            // ignore this one
+                        }
+                    }
+                }
+                null
+            }
+        }
+    }
+    return dexOutputs
+}
 
 
+//DexWorkAction.kt
+override fun run() {
+    try {
+        launchProcessing(
+            params,
+            System.out,
+            System.err,
+            MessageReceiverImpl(params.dexSpec.dexParams.errorFormatMode, Logging.getLogger(DexArchiveBuilderTaskDelegate::class.java))
+        )
+    } catch (e: Exception) {
+        throw BuildException(e.message, e)
+    }
+}
 
 
+//DexWorkAction.kt
+fun launchProcessing(dexWorkActionParams: DexWorkActionParams, outStream: OutputStream, errStream: OutputStream, receiver: MessageReceiver) {
+    //getDexArchiveBuilder 根据使用的编译工具，创建不同的类来生成 dex，如果使用 DX 编译，则通过 DexArchiveBuilder.createDxDexBuilder 创建 DxDexBuilder 编译 class 文件。如果使用 D8，则通过 DexArchiveBuilder.createD8DexBuilder 创建 D8DexBuilder 来编译 class 文件
+    //高版本的 Gradle 默认都是使用 D8
+    val dexArchiveBuilder = getDexArchiveBuilder(dexWorkActionParams, outStream, errStream, receiver)
+    if (dexWorkActionParams.dexSpec.isIncremental) {
+        //增量编译
+        processIncrementally(dexArchiveBuilder, dexWorkActionParams)
+    } else {
+        //全量编译
+        processNonIncrementally(dexArchiveBuilder, dexWorkActionParams)
+    }
+}
 
 
+//DexArchiveBuilder.kt
+private fun getDexArchiveBuilder(dexWorkActionParams: DexWorkActionParams, outStream: OutputStream, errStream: OutputStream, messageReceiver: MessageReceiver): DexArchiveBuilder {
+    val dexArchiveBuilder: DexArchiveBuilder
+    with(dexWorkActionParams) {
+        when (dexer) {
+            DexerTool.DX -> {
+                val config = DexArchiveBuilderConfig(
+                    DxContext(outStream, errStream),
+                    !dxDexParams.dxNoOptimizeFlagPresent, // optimizedDex
+                    dxDexParams.inBufferSize,
+                    dexSpec.dexParams.minSdkVersion,
+                    DexerTool.DX,
+                    dxDexParams.outBufferSize,
+                    dxDexParams.jumboMode
+                )
+
+                dexArchiveBuilder = DexArchiveBuilder.createDxDexBuilder(config)
+            }
+            DexerTool.D8 -> dexArchiveBuilder = DexArchiveBuilder.createD8DexBuilder(
+                com.android.builder.dexing.DexParameters(
+                    minSdkVersion = dexSpec.dexParams.minSdkVersion,
+                    debuggable = dexSpec.dexParams.debuggable,
+                    dexPerClass = dexSpec.dexParams.dexPerClass,
+                    withDesugaring = dexSpec.dexParams.withDesugaring,
+                    desugarBootclasspath =
+                    DexArchiveBuilderTaskDelegate.sharedState.getService(dexSpec.dexParams.desugarBootclasspath).service,
+                    desugarClasspath =
+                    DexArchiveBuilderTaskDelegate.sharedState.getService(dexSpec.dexParams.desugarClasspath).service,
+                    coreLibDesugarConfig = dexSpec.dexParams.coreLibDesugarConfig,
+                    coreLibDesugarOutputKeepRuleFile =
+                    dexSpec.dexParams.coreLibDesugarOutputKeepRuleFile,
+                    messageReceiver = messageReceiver
+                )
+            )
+            else -> throw AssertionError("Unknown dexer type: " + dexer.name)
+        }
+    }
+    return dexArchiveBuilder
+}
 
 
+@JvmStatic
+fun createD8DexBuilder(dexParams: DexParameters): DexArchiveBuilder {
+    return D8DexArchiveBuilder(dexParams)
+}
+```
 
+
+##### D8DexArchiveBuilder
+D8DexArchiveBuilder 的 convert 可以分为五个步骤
+1. 创建 D8 诊断信息处理器实例，用于发出不同级别的诊断信息，共分为三类，由严重程度递减分别为：error、warning、info。
+2. 创建一个 D8 命令构建器实例。
+3. 遍历读取每一个类的字节数据。
+4. 给 D8 命令构建器实例设置一系列的配置，例如 编译模式、最小 Sdk 版本等等。
+5. 使用 com.android.tools.r8 工具包中的 D8 类的 run 方法运行组装后的 D8 命令。
+
+
+```java
+@Override
+public void convert(@NonNull Stream<ClassFileEntry> input, @NonNull Path output, @Nullable DependencyGraphUpdater<File> desugarGraphUpdater) throws DexArchiveBuilderException {
+
+    List<ClassFile> inputClassFiles = new ArrayList<>();
+    //创建一个 D8 诊断信息处理器实例，用于发出不同级别的诊断信息，共分为三类，由严重程度递减分别为：error、warning、info。
+    D8DiagnosticsHandler d8DiagnosticsHandler = new InterceptingDiagnosticsHandler();
+    try {
+        //D8 命令构建器
+        D8Command.Builder builder = D8Command.builder(d8DiagnosticsHandler);
+        AtomicInteger entryCount = new AtomicInteger();
+        //遍历每一个 class ，读取并保存里面的字节数据
+        input.forEach(
+                entry -> {
+                    ClassFile classFile = new ClassFile(entry.getInput().getPath(), entry.getRelativePath(), readAllBytes(entry));
+                    inputClassFiles.add(classFile);
+                    builder.addClassProgramData(classFile.getContents(), D8DiagnosticsHandler.getOrigin(entry));
+                    entryCount.incrementAndGet();
+                });
+        //如果没有转换的 class，直接 return
+        if (entryCount.get() == 0) {
+            return;
+        }
+
+        //设置 D8 构建器的一些配置信息，编译类型，输出路径，最小 API 等等
+        builder.setMode(dexParams.getDebuggable() ? CompilationMode.DEBUG : CompilationMode.RELEASE)
+                .setMinApiLevel(dexParams.getMinSdkVersion())
+                .setIntermediate(true)
+                .setOutput(output, dexParams.getDexPerClass() ? OutputMode.DexFilePerClassFile : OutputMode.DexIndexed)
+                .setIncludeClassesChecksum(dexParams.getDebuggable());
+
+        if (dexParams.getWithDesugaring()) {
+            builder.addLibraryResourceProvider(dexParams.getDesugarBootclasspath().getOrderedProvider());
+            builder.addClasspathResourceProvider(dexParams.getDesugarClasspath().getOrderedProvider());
+
+            if (dexParams.getCoreLibDesugarConfig() != null) {
+                builder.addSpecialLibraryConfiguration(dexParams.getCoreLibDesugarConfig());
+                if (dexParams.getCoreLibDesugarOutputKeepRuleFile() != null) {
+                    builder.setDesugaredLibraryKeepRuleConsumer(new FileConsumer(dexParams.getCoreLibDesugarOutputKeepRuleFile().toPath()));
+                }
+            }
+        } else {
+            builder.setDisableDesugaring(true);
+        }
+
+        //调用 D8.jar 工具运行 D8Command 组装的 D8 命令
+        D8.run(builder.build(), MoreExecutors.newDirectExecutorService());
+    } catch (Throwable e) {
+        throw getExceptionToRethrow(e, d8DiagnosticsHandler);
+    }
+
+    if (desugarGraphUpdater != null) {
+        D8DesugarGraphGenerator.generate(
+                inputClassFiles,
+                dexParams,
+                new D8DesugarGraphConsumerAdapter(desugarGraphUpdater));
+    }
+}
+```
 
 
 
