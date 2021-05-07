@@ -1,6 +1,6 @@
 RxJava 原理
 1. Single/Observerable：发送数据的对象
-2. RxJavaPlugins.setXxxxx：设置钩子，在实现在 Single/Observerable 创建时或。者被订阅时执行一些操作。
+2. RxJavaPlugins.setXxxxx：设置钩子，实现在 Single/Observerable 创建时或者被订阅时执行一些操作。
 3. Observer：接受结果的回调。
 
 dispose：
@@ -17,7 +17,7 @@ Disposable 本质上就是一个桥接器，桥接上游与下游
 
 
 实例一：
-```kotlin
+```java
 fun sourceAnalyse() {
     //RxJava 最简单的实现
     //立刻发送一个字符串“1”，根本会感受不到 onSubscribe 的执行。
@@ -77,7 +77,6 @@ just {
 ```java
 //SingleJust.subcribe，SingleJust 继承自 Single，subcribe 具体实现在 Single 中。
 subscribe {
-
     @CheckReturnValue
     @NonNull
     @SchedulerSupport(SchedulerSupport.NONE)
@@ -86,7 +85,7 @@ subscribe {
         Objects.requireNonNull(onSuccess, "onSuccess is null");
         Objects.requireNonNull(onError, "onError is null");
 
-        //创建 ConsumerSingleObserver ，用于 Single 发送 item 时的回调，包括发射成功以及发生错误时的回调处理
+        //创建 ConsumerSingleObserver ，用于 Single 发送 item 时的回调，包括数据发送成功以及发送错误时的回调处理
         ConsumerSingleObserver<T> observer = new ConsumerSingleObserver<>(onSuccess, onError);
         subscribe(observer);
         return observer;
