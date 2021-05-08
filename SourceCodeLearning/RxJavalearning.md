@@ -150,15 +150,15 @@ SingleObserver 是下游
 
 
 ```java
-//将 SingleJust<Int> 转成了 SingleMap<String>，SingleJust 和 SingleMap 都是 Single 的子类
+//将 SingleJust<Int>（上游 0） 转成了 SingleMap<String>（上游 1），SingleJust 和 SingleMap 都是 Single 的子类
 val single: Single<Int> = Single.just(1)
-
 val singleMap = single.map(object: Function<Int, String> {
     override fun apply(t: Int): String {
         return t.toString()
     }
 })
 
+//执行上游 1 的 subscribe(SingleObserver) 函数
 singleMap.subscribe(object: SingleObserver<String> {
     override fun onSubscribe(d: Disposable?) {
         
@@ -170,11 +170,13 @@ singleMap.subscribe(object: SingleObserver<String> {
 
     override fun onError(e: Throwable?) {
     }
-
 })
 ```
 
 ```java
+//SingleJust 是 Single 的子类，map 方法的具体实现在 Single.java 中
+//map 方法将 SingleJust 封装到了 SingMap 中，然后返回 SingleMap 对象
+//将 SingleJust 设为上游 0，被封装之后的 SingleMap 设为上游 1
 map {
     @CheckReturnValue
     @NonNull
@@ -193,7 +195,7 @@ subscribe {
     //SingleMap.java
     @Override
     protected void subscribeActual(final SingleObserver<? super R> t) {
-        //t 是原始的观察者，这里会将原始的观察者（SingleObserver）转换成一个新的（ MapSingleObserver ），MapSingleObserver 构造函数将传进去的原始观察者 t 和映射函数 mapper 保存到了成员变量中
+        //t 是原始的观察者，这里会将原始的观察者（SingleObserver）转换成一个新的观察者（ MapSingleObserver ），MapSingleObserver 构造函数将传进去的原始观察者 t 和映射函数 mapper 保存到了成员变量中
         //source.subscribe 实际会执行 SingleJust.subscribeActual 方法，最终执行 MapSingleObserver 的 onSubscribe 和 onSuccess 方法
         source.subscribe(new MapSingleObserver<T, R>(t, mapper));
     }
