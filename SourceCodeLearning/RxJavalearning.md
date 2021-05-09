@@ -120,20 +120,27 @@ subscribe {
     //SingleJust.java
     @Override
     protected void subscribeActual(SingleObserver<? super T> observer) {
-        //observer 就是执行 subscribe 时传进来的观察者，这里面直接执行订阅回调，已经发送成功回调，并将数据发送出去
-        //Disosable 返回的是一个 EmptyDisposable.INSTANCE 的枚举，是一个状态值，表示此次发送已被丢弃，因为 Single.just 是一个瞬时完成的订阅和发送，是不存在中间状态的，开始即结束。
+        //observer 就是执行 subscribe 时传进来的 SingleObserver（下游 0），发送 onSubscribe 事件给下游 0
+        //Disosable.disposed 返回的是一个 EmptyDisposable.INSTANCE 的枚举，是一个状态值，表示此次发送已被丢弃，因为 Single.just 是一个瞬时完成的订阅和发送，是不存在中间状态的，开始即结束。
         observer.onSubscribe(Disposable.disposed());
         observer.onSuccess(value);
+    }
+
+    //Disposable.java
+    @NonNull
+    static Disposable disposed() {
+        //EmptyDisposable 是一个枚举类，它实现了 QueueDisposable<Object> 接口，是一个可取消的对象。
+        return EmptyDisposable.INSTANCE;
     }
 }
 
 ```
 
 
-实例二：
+实例二
 1. Single.just(value)：保存 value
-1. single.map: SingleJust -> SingleMap(singleJust, function)
-2. singleMap.subscribe(SingleObserver): 
+2. single.map: SingleJust -> SingleMap(singleJust, function)
+3. singleMap.subscribe(SingleObserver): 
     - SingleObserver -> MapSingleObserver(singleObserver, function)：将 SingleObserver 转成 MapSingleObserver
     - singleJust.subscribe(mapSingleObserver)：开始订阅。 SingleJust 没有中间过程，因此开始即结束，没有中间过程
     - mapSingleObserver.onSubcribe(dispose) -> singleObserver.onSubcribe(dispose)
@@ -147,6 +154,7 @@ SingleMap 是桥梁，执行一个转换操作。当上游开始发送事件了�
 SingleObserver 是下游
 
 因此 SingleMap 从上游承接事件，MapSingleObserver 处理 SingleMap 从上游承接的事件，处理完成之后再转发给下游
+
 
 
 ```java
@@ -189,28 +197,33 @@ map {
     }
 }
 
-
+//执行上游 1 的 subscribe 方法
 subscribe {
 
     //SingleMap.java
     @Override
     protected void subscribeActual(final SingleObserver<? super R> t) {
-        //t 是原始的观察者，这里会将原始的观察者（SingleObserver）转换成一个新的观察者（ MapSingleObserver ），MapSingleObserver 构造函数将传进去的原始观察者 t 和映射函数 mapper 保存到了成员变量中
-        //source.subscribe 实际会执行 SingleJust.subscribeActual 方法，最终执行 MapSingleObserver 的 onSubscribe 和 onSuccess 方法
+        //t 是下游 0，mapper 是映射函数，将二者封装到 MapSingleObserver 中，作为一个新的下游（下游 1）
+        //source.subscribe 最后会执行 SingleJust.subscribeActual 方法，subscribeActual 是所有的被观察者实际订阅并开始发送事件的地方，这里面发送的事件则由传进 subscribe 的观察者（Observer）接受， 观察者接收到事件之后会回调相应的函数（onSubscribe，onSuccess 等）
+        //因此此处调用了 (上游 0)SingleJust.subscribe 之后将触发 (下游 1)MapSingleObserver 的 onSubscribe 和 onSuccess 方法，因为 SingleJust 一旦开始被订阅（subscribe 方法被执行）就会立刻发送 onSubscribe 和 onSuccess 函数
         source.subscribe(new MapSingleObserver<T, R>(t, mapper));
     }
 
-    //MapSingleObserver
-    //执行原始观察者 t 的 onSubcribe，t 是调用 SingleMap.subcribe() 时传进来的 Observer 对象。
+
+
+    //MapSingleObserver.java 下游 1
+    //MapSingleObserver（下游1）在收到 onSubscribe 事件之后直接传递给了下游0（t）
+    //Disposable 对象是由 SingleJust（上游 0）通过 Disposable.disposed() 创建并传过来的，用于做取消任务操作的。 Disposable.disposed() 返回的是一个 EmptyDisposable.INSTANCE 枚举（EmptyDisposable 对象），EmptyDisposable 它的 dispose() 是一个空实现，表示并不需要执行任何额外的取消操作。
     @Override
     public void onSubscribe(Disposable d) {
-        //将上游给的 Disposable 直接传给下游，这里的上游就是 SingleJust，它传过来的 Disposable 是通过 Disposable.disposed() 创建的。
         t.onSubscribe(d);
     }
 
 
-    //将 SingleJust.map 传进来的 Function（mapper）应用到 value 上面。就是执行映射函数，这其实也是开始即结束，没有中间过程。
-    //MapSingleObserver
+    //MapSingleObserver.java 下游 1
+    //MapSingleObserver（下游1）收到上游 0 传过来的 onSuccess 事件，该事件携带了上游 0 发过来的数据。 
+    //MapSingleObserver 会将映射函数（mapper）应用到上游 0 传过来的 value 上，也就是对 value 执行映射操作，将映射后的 value 通过 onSuccess 事件传递给下游 0。
+    //mapper 是调用 Single.map(...) 方法是传进去的 Function 对象，是由开发者自定义的
     @Override
     public void onSuccess(T value) {
         R v;
@@ -223,12 +236,6 @@ subscribe {
         }
 
         t.onSuccess(v);
-    }
-
-
-@NonNull
-    static Disposable disposed() {
-        return EmptyDisposable.INSTANCE;
     }
 }
 ```
@@ -266,6 +273,7 @@ Observable.interval(1, 1, TimeUnit.SECONDS)
 ```
 
 ```java
+//interval 返回 ObservableInterval 作为原始被观察者（上游 0）。其内部会通过 Schedulers.computation 创建一个 ComputationTask 对象，它是用来执行线程的创建和切换的。
 interval {
     @CheckReturnValue
     @SchedulerSupport(SchedulerSupport.COMPUTATION)
@@ -289,16 +297,19 @@ interval {
     }
 }
 
+
 subscribe {
-    //ObservableInterval.java
+    //ObservableInterval.java  上游 0
+    //ObservableInterval.subscribe 方法被调用时，实际执行的是 subscribeActual （被观察者被订阅时，在该函数中发送）。
     @Override
     public void subscribeActual(Observer<? super Long> observer) {
-        //创建桥梁观察者，与下游对接，它继承自 AtomicReference 类，并实现了 Runnable 和 Disposable 接口，但它并没有实现 Observer 接口，
+        //将 observer（下游 0）封装到 IntervalObserver 中，它继承自 AtomicReference 类，并实现了 Runnable 和 Disposable 接口，但它并没有实现 Observer 接口。因此它只是对下游 0 做了一层包装，将其包装成了一个可以被取消的任务，并且在任务执行完成之后自动会将结果发送给观察者（下游 0）（所以才要将 observer 封装到其内部）。
         //可以认为 IntervalObserver 是一个线程安全的 Disposable，它实现了 Disposable 接口表示它是一个可取消的对象，不过它继承了 AtomicReference<Disposable> 又表示实际执行 dispose 操作的是它所指向的那个 Disposable。也就是当调用 IntervalObserver 的 dispose 方法时，它实际会调用 IntervalObserver 所指向的那个 Disposable 的 dispose 操作。
         IntervalObserver is = new IntervalObserver(observer);
-        //将 onSubscribe 直接转发给下游
+        //上游 0 发送 onSubscribe 事件给下游 0（observer），然后传递 IntervalObserver 过去，让调用者可以通过此对象来取消订阅。
         observer.onSubscribe(is);
 
+        //scheduler 是 interval 内部创建的 ComputationTask 对象。
         Scheduler sch = scheduler;
 
         //走 else 分支，sch 是 ComputationTask 的实例，并不是 TrampolineScheduler 的子类
@@ -307,20 +318,22 @@ subscribe {
             is.setResource(worker);
             worker.schedulePeriodically(is, initialDelay, period, unit);
         } else {
-            //创建一个间隔性的任务，is 就是 IntervalObserver ，它也是一个 Runnable，也就是间隔执行 IntervalObserver 这个 Runnable，而 IntervalObserver 的 run 方法则是不断的往下游发送 onNext 事件。
-            //这里可以看作是创建一个可取消的定时器，只要这个定时器没有被取消，就会按照指定的频率执行传进去的 is（也就是 IntervalObserver）。
+            //is 就是 IntervalObserver 对象，它是一个 Runnable。这里将创建一个定时任务，在延迟 initialDelay 之后，以指定的频率（每 period 个 unit 执行一次，unit 是时间单位（例如 SECOND 表示秒））执行 is。而 IntervalObserver 的 run 方法则是不断的往下游发送 onNext 事件。
+            //最终就是在延迟 initialDelay 之后，每 period 个 unit 向下游 0 发送 onNext 事件，携带对应的数据
+            //也可以理解为创建了一个可取消的定时器，只要这个定时器没有被取消，就会按照指定的频率执行传进去的 is（也就是 IntervalObserver）。schedulePeriodicallyDirect 返回的是一个 ScheduledRunnable 对象，顾名思义，这是一个已被安排的任务，也就是将要最近将要被执行的任务。
             Disposable d = sch.schedulePeriodicallyDirect(is, initialDelay, period, unit);
             //设置 IntervalObserver 的实际 Disposable，其实就是将上面获取的定时器放到 IntervalObserver 里面去，当 IntervalObserver 被取消时，实际执行取消操作的时 IntervalObserver 内部的计时器
-            //Disposable 是需要传递给下游的，这样设计的好处是在 onSubscribe 方法中给下游设置了 Disposable 之后，之后即使 Disposable 发生了变化，也不必再重新给下游设置 Disposable 了，只需更改 IntervalObserver 内部的 Disposable 即可，因此 IntervalObserver 实际是将下游与内部的 Disposable 挂接起来了。
+            //Disposable 是需要传递给下游的，这样设计的好处是在 onSubscribe 方法中给下游设置了 Disposable 之后，之后即使 Disposable 发生了变化，也不必再重新给下游设置 Disposable 了，只需更改 IntervalObserver 内部的 Disposable 即可，因此 IntervalObserver 实际是将下游与内部的 Disposable 挂接起来了，而 IntervalObserver 内部的 Disposable 是可以神不知鬼不觉的被替换的。
             is.setResource(d);
         }
     }
 
+    //定时器内部执行的任务，就是给下游发送 onNext 事件
     ObservableInterval.run {
         @Override
         public void run() {
-            //如果 Disposable 没有被取消，则向下游发送 onNext 事件
-            //downstream 就是创建 IntervalObserver 时传进来的 Observer，也就是最终下游
+            //get 方法获取 ObserverableInterval 自身的状态，以此检查调用者有没有取消定时器。
+            //downstream 就是创建 IntervalObserver 时传进来的 Observer，也就是下游 0，也就是在任务在执行完成之后会自动将执行结果发送给下游。
             if (get() != DisposableHelper.DISPOSED) {
                 downstream.onNext(count++);
             }
@@ -334,11 +347,13 @@ subscribe {
             DisposableHelper.dispose(this);
         }
 
+        //DisposableHelper.java
+        //DisposableHelper 是一个枚举类。
         public static boolean dispose(AtomicReference<Disposable> field) {
-            //获取 IntervalObserver 所指向的那个 Disposeable
+            //获取 IntervalObserver 所指向的那个 Disposeable，IntervalObserver 继承了 AtomicReference 类，即它只是一个引用，它内部指向的 Disposable 才是真正工作的 Disposable
             Disposable current = field.get();
             Disposable d = DISPOSED;
-            if (current != d) {//如果已经被取消了，则不在执行取消操作
+            if (current != d) {//如果已经被取消了，则不再执行取消操作。
                 current = field.getAndSet(d);
                 if (current != d) {
                     if (current != null) {
@@ -453,9 +468,7 @@ subscribe {
 
             return sr;
         }
-    }
-
-    
+    } 
 }
 ```
 
