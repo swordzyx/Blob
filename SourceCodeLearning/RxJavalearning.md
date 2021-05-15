@@ -275,6 +275,7 @@ Observable.interval(1, 1, TimeUnit.SECONDS)
 ```java
 //interval 返回 ObservableInterval 作为原始被观察者（上游 0）。其内部会通过 Schedulers.computation 创建一个 ComputationTask 对象，它是用来执行线程的创建和切换的。
 interval {
+    //Observable.java
     @CheckReturnValue
     @SchedulerSupport(SchedulerSupport.COMPUTATION)
     @NonNull
@@ -309,7 +310,7 @@ subscribe {
         //上游 0 发送 onSubscribe 事件给下游 0（observer），然后传递 IntervalObserver 过去，让调用者可以通过此对象来取消订阅。
         observer.onSubscribe(is);
 
-        //scheduler 是 interval 内部创建的 ComputationTask 对象。
+        //scheduler 是执行 Observable.interval 时内部创建的 ComputationTask 对象。
         Scheduler sch = scheduler;
 
         //走 else 分支，sch 是 ComputationTask 的实例，并不是 TrampolineScheduler 的子类
@@ -320,10 +321,10 @@ subscribe {
         } else {
             //is 就是 IntervalObserver 对象，它是一个 Runnable。这里将创建一个定时任务，在延迟 initialDelay 之后，以指定的频率（每 period 个 unit 执行一次，unit 是时间单位（例如 SECOND 表示秒））执行 is。而 IntervalObserver 的 run 方法则是不断的往下游发送 onNext 事件。
             //最终就是在延迟 initialDelay 之后，每 period 个 unit 向下游 0 发送 onNext 事件，携带对应的数据
-            //也可以理解为创建了一个可取消的定时器，只要这个定时器没有被取消，就会按照指定的频率执行传进去的 is（也就是 IntervalObserver）。schedulePeriodicallyDirect 返回的是一个 ScheduledRunnable 对象，顾名思义，这是一个已被安排的任务，也就是将要最近将要被执行的任务。
+            //也可以理解为创建了一个可取消的定时器，只要这个定时器没有被取消，就会按照指定的频率执行传进去的 is（也就是 IntervalObserver）。schedulePeriodicallyDirect 返回的是一个 ScheduledRunnable 对象，顾名思义，这是一个已被安排的任务，也就是将要最近将要被执行的任务。将此对象传到 IntervalObserver 内部作为 Disposable，表示用户可以调用 ScheduledRunnable 的 dispose 方法来取消任务。
             Disposable d = sch.schedulePeriodicallyDirect(is, initialDelay, period, unit);
-            //设置 IntervalObserver 的实际 Disposable，其实就是将上面获取的定时器放到 IntervalObserver 里面去，当 IntervalObserver 被取消时，实际执行取消操作的时 IntervalObserver 内部的计时器
-            //Disposable 是需要传递给下游的，这样设计的好处是在 onSubscribe 方法中给下游设置了 Disposable 之后，之后即使 Disposable 发生了变化，也不必再重新给下游设置 Disposable 了，只需更改 IntervalObserver 内部的 Disposable 即可，因此 IntervalObserver 实际是将下游与内部的 Disposable 挂接起来了，而 IntervalObserver 内部的 Disposable 是可以神不知鬼不觉的被替换的。
+            //设置 IntervalObserver 的实际 Disposable，其实就是将上面获取的 ScheduleRunnable 放到 IntervalObserver 里面去，当 IntervalObserver 被取消时，实际执行取消操作的是 IntervalObserver 内部的定时任务
+            //Disposable 是需要传递给下游的，这样设计的好处是在 onSubscribe 方法中给下游设置了 Disposable 之后，之后即使 Disposable 发生了变化，也不必再重新给下游设置 Disposable 了，只需更改 IntervalObserver 内部的 Disposable 即可，因此 IntervalObserver 其实是将下游与内部的 Disposable 挂接起来了，而 IntervalObserver 内部的 Disposable 是可以神不知鬼不觉的被替换的。
             is.setResource(d);
         }
     }
@@ -340,10 +341,12 @@ subscribe {
         }
     }
 
+    //取消定时任务。
     IntervalObserver.dispose {
         //IntervalObserver.java
         @Override
         public void dispose() {
+            //取消 IntervalObserver 内部引用的真正工作的 Disposable
             DisposableHelper.dispose(this);
         }
 
@@ -352,10 +355,16 @@ subscribe {
         public static boolean dispose(AtomicReference<Disposable> field) {
             //获取 IntervalObserver 所指向的那个 Disposeable，IntervalObserver 继承了 AtomicReference 类，即它只是一个引用，它内部指向的 Disposable 才是真正工作的 Disposable
             Disposable current = field.get();
+            //DISPOSED 表示订阅已取消。
             Disposable d = DISPOSED;
-            if (current != d) {//如果已经被取消了，则不再执行取消操作。
+            //检查当前是否是已取消的状态，如果已经被取消了，则不再执行取消操作。
+            if (current != d) {
+                //这是一个原子操作，获取当前指向的 Disposable，并将当前指向的 Disposable 替换为 DISPOSED，表示任务已取消订阅。
                 current = field.getAndSet(d);
-                if (current != d) {
+                //再一次判断当前订阅是否已被取消，这是防止重复取消的情况。
+                //例如线程 A 再第一次执行 if(current != d) 时为真，但 "current = field.getAndSet(d)" 还没执行完，线程 B 也执行到第一句 “if(current != d)” 了，此时也为真，但由于线程 A 正在执行 “current = field.getAndSet(d)” 因此 B 进入等待状态，当 A 执行完毕了，此时 IntervalObserver 内部指向的 Disposable 已经是 DISPOSED 了。
+                //线程 B 继续执行 “field.getAndSet(d)” ，返回的 current 就是 DISPOSED ，第二次 if(current != d) 就会返回 false，避免重复执行 dispose() 操作。
+                if (current != d) { 
                     if (current != null) {
                         current.dispose();
                     }
@@ -366,6 +375,7 @@ subscribe {
         }
 
         //IntervalObserver.java
+        //执行 ObservableInterval 的 subscribeActual 时会调用此方法，将参数 d 作为 IntervalObserver 真正引用的 Disposable。首次调用时传进来的 Disposable 是一个可被取消定时任务
         public void setResource(Disposable d) {
             DisposableHelper.setOnce(this, d);
         }
@@ -386,7 +396,9 @@ subscribe {
     }
 
     schedulePeriodicallyDirect {
+        //Scheduler.java
         @NonNull
+        //传进来的 Runnable 是 IntervalObserver 的对象
         public Disposable schedulePeriodicallyDirect(@NonNull Runnable run, long initialDelay, long period, @NonNull TimeUnit unit) {
             //createWorker 具体实现在 ComputationScheduler 中，创建一个 EventLooperWorker 对象并返回
             final Worker w = createWorker();
@@ -394,8 +406,10 @@ subscribe {
             //钩子函数，线程调度时执行
             final Runnable decoratedRun = RxJavaPlugins.onSchedule(run);
 
+            //PeriodicDirectTask 实现了 Disposable ，Runnable，SchedulerRunnableIntrospection 接口，它是对 Runnable 的一个包装，可以执行和取消它里面真正的 Runnable
             PeriodicDirectTask periodicTask = new PeriodicDirectTask(decoratedRun, w);
 
+            //安排一个周期任务。
             Disposable d = w.schedulePeriodically(periodicTask, initialDelay, period, unit);
             if (d == EmptyDisposable.INSTANCE) {
                 return d;
@@ -404,31 +418,39 @@ subscribe {
             return periodicTask;
         }
 
+        //Scheduler.java
         @NonNull
+        //run 参数是一个 PeriodicDirectTask 对象，它实现了 Runnable 接口。
         public Disposable schedulePeriodically(@NonNull Runnable run, final long initialDelay, final long period, @NonNull final TimeUnit unit) {
+            //SequentialDisposable 是一个 Disposable 容器，它允许以原子的方式更新和替换 Disposable，也可以 dispose 其本身
             final SequentialDisposable first = new SequentialDisposable();
 
+            //将 first 放入 sd 容器里面
             final SequentialDisposable sd = new SequentialDisposable(first);
 
             final Runnable decoratedRun = RxJavaPlugins.onSchedule(run);
 
-            //时间间隔
+            //时间间隔，将时间转成以毫秒为单位。
             final long periodInNanoseconds = unit.toNanos(period);
             //初始延迟
             final long firstNowNanoseconds = now(TimeUnit.NANOSECONDS);
             //Runnable 首次执行的时间
             final long firstStartInNanoseconds = firstNowNanoseconds + unit.toNanos(initialDelay);
 
-            Disposable d = schedule(new PeriodicTask(firstStartInNanoseconds, decoratedRun, firstNowNanoseconds, sd, periodInNanoseconds), initialDelay, unit);
+            //安排一个可取消的延时任务，并将该延时任务作为 Disposable 返回。（返回的实际上是一个 ScheduleRunnable 对象）
+            Disposable d = schedule(new PeriodicTask(firstStartInNanoseconds, decoratedRun,   , sd, periodInNanoseconds), initialDelay, unit);
 
             if (d == EmptyDisposable.INSTANCE) {
                 return d;
             }
+            //将周期任务放入 first 容器中。这也间接替换了 sd 容器中的 Disposable
             first.replace(d);
 
             return sd;
         }
 
+        //ComputationScheduler.java
+        //schedule 由 Scheduler 的子类实现。而 Schedulers.IO 返回的是 ComputationTask ，它是 ComputationScheduler 对象。
         @NonNull
         @Override
         public Disposable schedule(@NonNull Runnable action) {
@@ -439,10 +461,13 @@ subscribe {
             return poolWorker.scheduleActual(action, 0, TimeUnit.MILLISECONDS, serial);
         }
 
+        //NewThredWorker.java
         @NonNull
         public ScheduledRunnable scheduleActual(final Runnable run, long delayTime, @NonNull TimeUnit unit, @Nullable DisposableContainer parent) {
             Runnable decoratedRun = RxJavaPlugins.onSchedule(run);
 
+            //ScheduledRunnable 是 AtomicReferenceArray 的子类，实现了 Runnable, Callable<Object>, Disposable 接口。
+            //传进来的 run 是 PeriodicTask 对象，PeriodicTask 实现了 Runnable 和 SchedulerRunnableIntrospection 接口。
             ScheduledRunnable sr = new ScheduledRunnable(decoratedRun, parent);
 
             if (parent != null) {
@@ -451,6 +476,7 @@ subscribe {
                 }
             }
 
+            //通过线程池来执行后台任务，使用 Future 获取线程计算的结果。。
             Future<?> f;
             try {
                 if (delayTime <= 0) {
@@ -492,7 +518,6 @@ Single.just(1).delay(1, TimeUnit.SECONDS).subscribe(object: SingleObserver<Int> 
     override fun onError(e: Throwable?) {
 
     }
-
 })
 ```
 
