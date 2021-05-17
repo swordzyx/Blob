@@ -438,26 +438,26 @@ subscribe {
             final long firstStartInNanoseconds = firstNowNanoseconds + unit.toNanos(initialDelay);
 
             //安排一个可取消的延时任务，并将该延时任务作为 Disposable 返回。（返回的实际上是一个 ScheduleRunnable 对象）
-            Disposable d = schedule(new PeriodicTask(firstStartInNanoseconds, decoratedRun,   , sd, periodInNanoseconds), initialDelay, unit);
+            Disposable d = schedule(new PeriodicTask(firstStartInNanoseconds, decoratedRun, firstNowNanoseconds, sd, periodInNanoseconds), initialDelay, unit);
 
             if (d == EmptyDisposable.INSTANCE) {
                 return d;
             }
-            //将周期任务放入 first 容器中。这也间接替换了 sd 容器中的 Disposable
+            //将 first 替换成 d，也就是替换了 sd 容器中的 Disposable
             first.replace(d);
 
             return sd;
         }
 
         //ComputationScheduler.java
-        //schedule 由 Scheduler 的子类实现。而 Schedulers.IO 返回的是 ComputationTask ，它是 ComputationScheduler 对象。
+        //schedule 由 Scheduler 的子类实现。Schedulers.IO 返回的是 ComputationTask ，它是 ComputationScheduler 对象。
         @NonNull
         @Override
         public Disposable schedule(@NonNull Runnable action) {
             if (disposed) {
                 return EmptyDisposable.INSTANCE;
             }
-
+            //poolWorker 是在调用 createWorker 方法时进行实例化的。poolWorker 是一个 PoolWorker 对象，PoolWorker 是 NewThreadWorker 的子类，NewThreadWorker 里面封装了 ExecutorService，本质上是通过 ExecutorService 来切换线程。scheduleActual 具体实现在 NewThreadWorker 中。
             return poolWorker.scheduleActual(action, 0, TimeUnit.MILLISECONDS, serial);
         }
 
@@ -476,7 +476,7 @@ subscribe {
                 }
             }
 
-            //通过线程池来执行后台任务，使用 Future 获取线程计算的结果。。
+            //通过线程池来执行后台任务，使用 Future 获取线程计算的结果。
             Future<?> f;
             try {
                 if (delayTime <= 0) {
