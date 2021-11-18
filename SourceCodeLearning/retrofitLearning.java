@@ -108,9 +108,9 @@ Retrofit.create {
       //Proxy.newProxyInstance 就是在运行是创建类。
       //这里返回的是我们创建的服务接口的实例类，这是 Retrofit 的核心代码
       return (T) Proxy.newProxyInstance(
-          service.getClassLoader(), //获取类加载器，这是没有任何特殊之处
-          new Class<?>[] {service}, //为什么要放到一个数组中？其实这里是可以接受多个接口的，但是 Retrofit 只提供了一个接口
-          new InvocationHandler() { //创建一个 InvocationHandler，这实际上是一个回调
+          service.getClassLoader(), //获取类加载器，这是没有任何特殊之处，就像我们要把一个东西装到一个箱子里面，重要的是东西，至于箱子，随便什么箱子都可以。service.getClassLoader() 是为了创建一个类而临时拿过来的一个 ClassLoader
+          new Class<?>[] {service}, //这个 service 就是 RetrofitService 接口，动态代理其实就是代理接口，这个接口就是我们提供的，这里就是 RetrofitService 接口。Proxy.newProxyInstance 其实可以代理多个接口，但是在 Retrofit 中只需要代理一个接口就好了，就是我们提供的执行网络请求的接口。
+          new InvocationHandler() { //创建一个 InvocationHandler，这实际上是一个回调。（跟 OnClickListener 的用法差不多），它的关键其实就在 invoke 方法。
               private final Platform platform = Platform.get(); //获取当前的平台，Android 还是 Java，Retrofit 对于不同的平台会有不同的行为。
               private final Object[] emptyArgs = new Object[0]; 
 
