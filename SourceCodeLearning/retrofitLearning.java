@@ -107,18 +107,18 @@ Retrofit.create {
       //动态代理分两个词，一个是动态，一个是代理。代理就是创建一个类，然后这个类会生成一个对象，这个类实现了一些指定的接口，然后这个类就会代理这些接口的实现，这个对象就是那个实际的代理，它代理了那些指定的方法。动态代理指的是这个类是在运行时生成的，不是在编译时生成的。
       //Proxy.newProxyInstance 就是在运行是创建类。
       //这里返回的是我们创建的服务接口的实例类，这是 Retrofit 的核心代码
+      //这里实际会创建 RetrofitService 接口的代理类。
       return (T) Proxy.newProxyInstance(
           service.getClassLoader(), //获取类加载器，这是没有任何特殊之处，就像我们要把一个东西装到一个箱子里面，重要的是东西，至于箱子，随便什么箱子都可以。service.getClassLoader() 是为了创建一个类而临时拿过来的一个 ClassLoader
           new Class<?>[] {service}, //这个 service 就是 RetrofitService 接口，动态代理其实就是代理接口，这个接口就是我们提供的，这里就是 RetrofitService 接口。Proxy.newProxyInstance 其实可以代理多个接口，但是在 Retrofit 中只需要代理一个接口就好了，就是我们提供的执行网络请求的接口。
-          new InvocationHandler() { //创建一个 InvocationHandler，这实际上是一个回调。（跟 OnClickListener 的用法差不多），它的关键其实就在 invoke 方法。
+          new InvocationHandler() { //创建一个 InvocationHandler，这实际上是一个回调。（跟 OnClickListener 的用法差不多），它的关键其实就在 invoke 方法。每当调用 RetrofitService 中的方法时，实际会执行 InvocationHandler#invoke() 方法，InvocationHandler 就是实际执行操作的对象。
               private final Platform platform = Platform.get(); //获取当前的平台，Android 还是 Java，Retrofit 对于不同的平台会有不同的行为。
               private final Object[] emptyArgs = new Object[0]; 
 
-              //invoke 函数时反射进行方法调用的时候会用到的。猜测肯定是在 newProxyInstance 方法中会使用到的
-              //这里猜测
+              //执行接口中的方法时，最终都会调用到 InvocationHandler#invoke 方法，invoke 接收三个参数，第一个是代理类实例，就是 Proxy.newProxyInstance() 创建的实例本身，第二个是代理的方法，第三个是方法的参数。
               @Override
               public @Nullable Object invoke(Object proxy, Method method, @Nullable Object[] args) throws Throwable {
-                // 检查当前调用的方法是否是 Object 中的方法，如果是，则直接调用这个对象中相应的方法。
+                // 检查当前调用的方法是否是 Object 中的方法，如果是，则直接调用这个对象中相应的方法。这是确保 InvocationHandler 代理的方法就是声明在接口中的方法
                 // getDeclaringClass 用于查看在哪个类中声明的这个方法
                 if (method.getDeclaringClass() == Object.class) {
                     return method.invoke(this, args);
@@ -126,7 +126,8 @@ Retrofit.create {
 
                 //到这里就表明要反射的方法是接口中的方法。
                 args = args != null ? args : emptyArgs;
-                //isDefaultMethod 用于判断当前方法是否默认实现的 Java 方法（Java 平台），这是 Java 8 新加的一个特性，Java 8 之后可以在接口中实现方法，之前是只能在实现类中实现
+                //isDefaultMethod 用于判断当前方法是否默认实现的 Java 方法（Java 平台），这是 Java 8 新加的一个特性，Java 8 之后可以在接口中的方法可以有默认实现，如果代理的方法有默认实现，则直接调用其默认实现。确保不代理 Java 8 的默认方法。
+                //platform 就是平台的意思，比如 Android，比如 Java8，Java7 这些都是平台，针对不同的平台，isDefaultMethod 会有不同的行为，但是需要对不同的平台都可以调用 isDefaultMethod() 方法，比如老版本的 Android 根本不支持 Java 8，也就不支持默认方法，但 Android 老版本依然要兼容，因此在老版本的 Android 上面调用 isDefaultMethod() 也要有返回值，通过 Platform 来做兼容。 isDefaultMethod 会判断当前是否
                 //回调用 loadServiceMethod 方法，这个方法返回一个 ， HttpServiceMethod 类型。
                 //所以调用的是 HttpServiceMethod.invoke 方法。
                 return platform.isDefaultMethod(method)
