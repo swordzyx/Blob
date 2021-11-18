@@ -96,11 +96,19 @@ Retrofit 中的动态代理的实现原理是什么？它代理的是我们创�
 Retrofit.create {
   public <T> T create(final Class<T> service) {
 
-      //验证是否为传进来的 service 是否为接口，这个 service 是我们自己创建的 HTTP 请求的集合接口
+      /* validateServiceInterface 函数作用：
+        service 就是调用 Retrofit.create(...) 时传进来的 RetrofitService.class，对 RetrofitService 接口进行校验
+          1. 检查 RetrofitService 是否是一个接口，如果不是接口，就抛异常 
+          2. 检查 RetrofitService 是否是泛型接口，如果是泛型接口，抛异常
+          3. 检查 RetrofitService 是否直接或间接实现了泛型接口，如果是，则抛异常。
+          4. 如果开启了积极验证，加载 RetrofitService 接口中的所有的方法，检查接口方法是否正确
+      */
       validateServiceInterface(service);
+      //动态代理分两个词，一个是动态，一个是代理。代理就是创建一个类，然后这个类会生成一个对象，这个类实现了一些指定的接口，然后这个类就会代理这些接口的实现，这个对象就是那个实际的代理，它代理了那些指定的方法。动态代理指的是这个类是在运行时生成的，不是在编译时生成的。
+      //Proxy.newProxyInstance 就是在运行是创建类。
       //这里返回的是我们创建的服务接口的实例类，这是 Retrofit 的核心代码
       return (T) Proxy.newProxyInstance(
-          service.getClassLoader(), //获取类加载器
+          service.getClassLoader(), //获取类加载器，这是没有任何特殊之处
           new Class<?>[] {service}, //为什么要放到一个数组中？其实这里是可以接受多个接口的，但是 Retrofit 只提供了一个接口
           new InvocationHandler() { //创建一个 InvocationHandler，这实际上是一个回调
               private final Platform platform = Platform.get(); //获取当前的平台，Android 还是 Java，Retrofit 对于不同的平台会有不同的行为。
@@ -126,6 +134,53 @@ Retrofit.create {
                     : loadServiceMethod(method).invoke(args);//这里调用的是 ServiceMethod.invoke 
               }
           });
+  }
+
+  /*
+    service 就是调用 Retrofit.create(...) 时传进来的 RetrofitService.class，对 RetrofitService 接口进行校验
+      1. 检查 RetrofitService 是否是一个接口，如果不是接口，就抛异常
+      2. 检查 RetrofitService 是否是泛型接口，如果是泛型接口，抛异常
+      3. 检查 RetrofitService 是否直接或间接实现了泛型接口，如果是，则抛异常。
+      4. 如果开启了积极验证，加载 RetrofitService 接口中的所有的方法，检查接口方法是否正确
+  */
+  private void validateServiceInterface(Class<?> service) {
+    //检查传入 Retrofit.create() 方法中的类型是不是一个接口，如果不是接口，就报一个异常。
+    if (!service.isInterface()) {
+      throw new IllegalArgumentException("API declarations must be interfaces.");
+    }
+
+    //Deque 是一个双向队列
+    Deque<Class<?>> check = new ArrayDeque<>(1);
+    check.add(service);
+    //检查传给 Retrofit.create() 的 class 对象，及其实现的父接口（比如，如果 RetrofitService 实现了一个父接口 Serializable，那么首先会将 RetrofitService 添加到双向队列中，然后再将 RetrofitServce 的父接口 Serialiable 也添加到双向队列中，进行检查，如果 Serializable 还实现了父接口，则会继续检查 Serializable 的父接口。）
+    while (!check.isEmpty()) {
+      Class<?> candidate = check.removeFirst();
+      //getTypeParameters 返回类的泛型类型（比如 ArrayList<String> 返回的就是 String），以当前示例为例，如果 RetrofitService 是一个泛型接口，就抛异常。即 RetrofitService 不能是一个泛型的接口，也不能继承泛型接口。
+      if (candidate.getTypeParameters().length != 0) {
+        StringBuilder message = new StringBuilder("Type parameters are unsupported on ").append(candidate.getName());
+        if (candidate != service) {
+          message.append(" which is an interface of ").append(service.getName());
+        }
+        throw new IllegalArgumentException(message.toString());
+      }
+      //将 RetrofitService 继承的父接口也添加到双向队列中，进行检查。
+      Collections.addAll(check, candidate.getInterfaces());
+    }
+
+    //用 Retrofit 来做 API 接口，我们写的 Service 接口类（例如 RetrofitService 接口）在调用的时候会有一些初始化操作，这些初始化只会在第一次调用接口 API 时候发生，这些初始化操作会对接口中的方法进行验证，验证接口方法写的是不是有问题。如果接口方法有问题，就会报错，然后应用就会崩溃。
+    // Retrofit 提供了一个选项，提供了在调用 Retrofit.create 方法创建接口实例时（即 Retrofit 的初始化过程中）就对接口中的方法进行检查，这样可以尽快暴露接口中存在的问题，快速暴露的好处就是方便测试，方便开发人员去调试，一打开软件就能知道方法是否有问题，这对于开发很方便。
+    //不过快速暴露是有代价的，会让性能比较差，每个方法的初始化过程会用到一点反射，这一点反射对于性能的影响不大，但如果所有的方法在软件刚刚打开时，一起做反射进行验证，这个耗时就会有些长，比如一个方法验证是 1ms，100 个方法同时做验证就是 100ms，这个时间就会比较长。所以 Retrofit 一般时在用到某个方法时，再去执行对这个方法的验证，这样就是将验证所需要的时间摊开了，用户就感觉不到这种卡顿。而在开发的时候则会希望做积极验证（validateEagerly 就是积极验证的意思），这样能够更快的暴露问题。
+    //对接口中没有默认实现，且非静态的方法都加载一遍，加载完成之后，接口方法的初始化操作也就完成了，如果接口方法有问题，在 loadServiceMethod(method) 中就会被检查出来。
+    if (validateEagerly) {
+      Platform platform = Platform.get();
+      //遍历接口中的所有方法。isDefaultMethod(method) 返回方法是否有默认实现，Modifier.isStatic() 返回方法是否为静态方法，Java 8 以前接口中的方法是不允许有默认实现的，且接口中也不允许有静态方法，而 Java 8 开始，接口中支持方法有默认实现，以及支持静态方法
+      //Retrofit 则直接过滤掉了有默认实现和静态的方法，这样更快一些。
+      for (Method method : service.getDeclaredMethods()) {
+        if (!platform.isDefaultMethod(method) && !Modifier.isStatic(method.getModifiers())) {
+          loadServiceMethod(method);
+        }
+      }
+    }
   }
 }
 

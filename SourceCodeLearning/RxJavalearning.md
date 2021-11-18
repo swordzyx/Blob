@@ -547,18 +547,17 @@ subcribe {
     @Override
     protected void subscribeActual(final SingleObserver<? super T> observer) {
 
-        //SequentialDisposable 也继承了 AtomicReference<Disposable> 类以及实现了 Disposable 接口，即它也是一个可取消的 Disposable，不过实际执行任务的是它内部所指向的那个 Disposable
+        //SequentialDisposable 继承了 AtomicReference<Disposable> 类并实现了 Disposable 接口，即它也是一个可取消的 Disposable，不过实际执行任务的是它内部所指向的那个 Disposable
         final SequentialDisposable sd = new SequentialDisposable();
         //触发下游的 onSubscribe 事件，此时 SD 内部还没有设置 Disposable
         observer.onSubscribe(sd);
-        //Delay 的是用作桥接的 Observer，直接与下游对接，Delay 的构造函数中保存了 SD 作为 Disposable 和 observer 作为下游
+        //Delay 的构造函数中保存了 SD 作为 Disposable 和 observer 作为下游
         source.subscribe(new Delay(sd, observer));
     }
 
 
     //SingleDelay.Delay
-    //所以 delay 操作是先触发下游的 onSubscribe 事件，然后再上游执行 onSubscrive 时设置 Disposable，这个 Disposable 就是 SingleJust 调用 observer.onSubscribe 时传过来的 Disposable.disposed()。
-    //
+    //delay 操作是先触发下游的 onSubscribe 事件，然后再上游执行 onSubscrive 时设置 Disposable，这个 Disposable 就是 SingleJust 调用 observer.onSubscribe 时传过来的 Disposable.disposed()。
     @Override
     public void onSubscribe(Disposable d) {
         sd.replace(d);
@@ -612,34 +611,39 @@ Observable.interval(1, 1, TimeUnit.SECONDS).map {
 ```
 
 ```java
+//将 ObservableInterval(上游 0) 封装到 ObservableMap(上游 1) 中，返回 ObservableMap 对象
 map {
     public final <R> Observable<R> map(@NonNull Function<? super T, ? extends R> mapper) {
         Objects.requireNonNull(mapper, "mapper is null");
+        //将 ObservableInterval(上游 0) 封装到 ObservableMap(上游 1) 中，返回 ObservableMap 对象
         return RxJavaPlugins.onAssembly(new ObservableMap<>(this, mapper));
     }
 }
-事件传递顺序：ObservableInterval（上游） -> ObservableMap -> MapObserver -> Observer（最终下游）
+事件传递顺序：ObservableInterval（上游 1） -> ObservableMap（上游 0） -> MapObserver（下游 1） -> Observer（下游 0）
 
-订阅顺序：ObservableMap（将 Observer 封装到 MapObserver 中） -> ObservableInterval（将 MapObserver 封装到 IntervalObserver 中，传递给 MapObserver） -> MapObserver -> Observer
+订阅顺序：ObservableMap（上游 0， 将 Observer 封装到 MapObserver 中） -> ObservableInterval（上游 1， 将 MapObserver 封装到 IntervalObserver 中，传递给 MapObserver） -> MapObserver（下游 1） -> Observer（下游 0）
 
 事件发送顺序： IntervalObserver.run -> MapObserver.onNext() -> Observer.onNext()
+
 
 subscribe {
     
 
-    //ObservableMap.java
+    //上游 1，ObservableMap.java
     @Override
     public void subscribeActual(Observer<? super U> t) {
-        //执行 MapObserver 的 onSubscribe，onSubscribe 的具体实现位于 MapObserver 的父类 BasicFuseableObserver 中。
+        //将传进来的 Observer(下游 0) 封装到 MapObserver(下游 1) 中，将 ObservableInterval(上游 0) 与 MapObserver(下游 1) 关联起来，之后上游 0 发送的事件将由下游 1 接收
+        //ObservableInterval(上游 0) 发送 onSubscribe 事件给 MapObserver(下游 1)，onSubscribe 的具体实现位于 MapObserver 的父类 BasicFuseableObserver 中。
         source.subscribe(new MapObserver<T, U>(t, function));
     }
 
     //ObservableInterval.Java  
-    //参数里面的 observer 是上面传过来的 MapObserver 对象，因此在
+    //里面的 observer 是下游 1
     @Override
     public void subscribeActual(Observer<? super Long> observer) {
+        //创建 IntervalObserver 对象，它继承自 AtomicReference 类，并实现了 Runnable 和 Disposable 接口。是一个任务对象
         IntervalObserver is = new IntervalObserver(observer);
-        //将 onSubscribe 事件传递给 MapObserver，onSubscribe 的具体实现在 MapObserver 的父类 BasicFuseableObserver 中
+        //将 onSubscribe 事件传递给 MapObserver（下游 1），onSubscribe 的具体实现在 MapObserver 的父类 BasicFuseableObserver 中
         observer.onSubscribe(is);
 
         Scheduler sch = scheduler;
@@ -647,8 +651,9 @@ subscribe {
         if (sch instanceof TrampolineScheduler) {
             .... //一般不会走这里
         } else {
-            //创建一个可取消的执行器，按照指定的规则执行 is（IntervalObserver，一个 Runnable），将这个执行执行器封装到 IntervalObserver 中，IntervalObserver 作为 Disposable 传递给下游
+            //通过 Scheduler 安排再指定初始延迟后，按给定的频率间隔执行 is，返回的 Disposable 其实还是 IntervalObserver，它实现了 Runnable 和 Disposable 接口，可以看作是一个可取消的任务。
             Disposable d = sch.schedulePeriodicallyDirect(is, initialDelay, period, unit);
+            //设置实际工作的 Disposable
             is.setResource(d);
         }
     }
@@ -669,7 +674,7 @@ subscribe {
             //在订阅前执行的操作，beforeDownstream 返回 true
             if (beforeDownstream()) {
 
-                //downstream 在 MapObserver 构造时设置，是最终的下游，也就是将 onSubscribe 事件传递给下游
+                //发送 onSubscribe 事件给下游 0，将 MapObserver 本身一起发给了下游
                 //BasicFuseableObserver 实现了 QueueDisposable<R> 接口
                 downstream.onSubscribe(this);
 
@@ -767,7 +772,8 @@ delay {
 
 subscribe {
     //ObservableDelay.java
-    //t 为最终下游，将 t 封装到 SerializedObserver 中，然后再将 SerializedObserver 封装到 DelayObserver 中，作为 ObservableInterval 的下游
+    //t 为下游 0，将 t 封装到 SerializedObserver(下游 1) 中，再将 SerializedObserver 封装到 DelayObserver(下游 2) 中
+    //SerializedObserver 实现了 Observer<T> 和 Disposable 接口，它也是一个观察者。
     @Override
     @SuppressWarnings("unchecked")
     public void subscribeActual(Observer<? super T> t) {
@@ -775,13 +781,15 @@ subscribe {
         if (delayError) {//delayError 为 false
             observer = (Observer<T>)t;
         } else {
+            //它主要是防止事件的同时发送，有多个事件需要发送时，会将这些事件放入一个列表中，一个一个发送
             observer = new SerializedObserver<>(t);
         }
 
         //创建一个调度器，执行延时操作
         Scheduler.Worker w = scheduler.createWorker();
 
-        //DelayObserver 会被封装到 IntervalObserver 中，IntervalObserver 是一个可被取消的执行器，这个执行器会传给 ObserverableInterval 的下游，也就是 DelayObserver
+        //创建 DelayObserver 对象(下游 2)
+        //将 DelayObserver(下游 2) 封装到 IntervalObserver(Disposable 对象) 中，IntervalObserver 是一个可被取消的 Runnable，这个 Runnable 会通过 onSubscribe 事件传给 DelayObserver(下游 2)
         source.subscribe(new DelayObserver <>(observer, delay, unit, w, delayError));
     }
 
@@ -811,7 +819,7 @@ subscribe {
 //subscribeOn 切换的是下游执行的线程。
 Single.subscribeOn {
     // Single.java
-    // 返回 SingleSubscribeOn 对象，将 this 作为 SingleSubscribeOn 的上游
+    // 创建并返回 SingleSubscribeOn 作为上游 n（假设调用了 subscribeOn 的 Observable 为上游 n-1）
     @CheckReturnValue
     @NonNull
     @SchedulerSupport(SchedulerSupport.CUSTOM)
@@ -825,28 +833,34 @@ Single.subscribeOn {
     //SubscribeOnObserver 做两件事，一件是作为 Runnable 用于执行任务，另一件事用作 Disposable 传递给下游，让下游能够取消任务。
     @Override
     protected void subscribeActual(final SingleObserver<? super T> observer) {
-        //将传进来的下游封装到 SubscribeOnObserver 中，也就是将 SubscribeOnObserver 变成 observer 的上游，将 SubscribeOnObserver 变成 source 的下游
+        //创建 SubscribeOnObserver(下游n) ，将传进来的 observer(下游n-1) 封装到 SubscribeOnObserver(下游 n) 中，source 是上游 n-1
         final SubscribeOnObserver<T> parent = new SubscribeOnObserver<>(observer, source);
-        //传递 onSubscribe 事件给下游，并将 SubscribeOnObserver 用作 Disposable 传递给下游，将 observer 变成 SubscribeOnObserver 的下游
+        //发送 onSubscribe 事件给下游 n-1，并将 SubscribeOnObserver(一个 Disposable，用于终止订阅) 传递给下游。
+        //在没有进行线程切换时，onSubscribe() 事件的发送是在下游 n 的 onSubscribe 中执行的。此时还是处于原始的线程
+        //SubscribeOnObserver 之前的被观察者的 onSubscribe 事件在原始线程中被发送给观察者对应的被观察者，而 SubscribeOnObserver 之后的被观察者的 onSubscribe 事件在新线程中发送
         observer.onSubscribe(parent);
 
         //通过 scheduler.scheduleDirect 切换线程，SubscribeOnObserver 也是一个 Runnable，通过 scheduler 在另一个线程上执行 Runnable
         Disposable f = scheduler.scheduleDirect(parent);
 
-        //parent 即为 SequentialDisposable 实例，parent.task 是一个 SequentialDisposable 对象，它继承了 AtomicReference 类并实现了 Disposable 接口，所以它是一个 Disposable 的外壳，它是一个可取消的线程切换任务。
+        //parent.task 是一个 SequentialDisposable 对象，它继承了 AtomicReference 类并实现了 Disposable 接口，所以它是一个 Disposable 的外壳，它是一个可取消的线程切换任务。
         //设置 Disposable 到 SequentialDisposable 内部作为真正的 Disposable，
         parent.task.replace(f);
 
     }
 
+    //新线程
     //SubscribeOnObserver.java
     @Override
     public void run() {
-        //source 向 SubscribeOnObserver 发送 onSubscribe 事件
+        //SingleSubscribeOn 的 subscribeActual 方法中，开启了一个新线程，在里面让上游 n-1 和下游 n 进行关联，触发上游 n-1 的 subscribeActual 方法。
+        //也就是说，上游 0 的 subscribeActual 也是在新线程中，即上游 0 发送的所有事件（onSubscribe，onNext等）也都是在新线程中。
+        //从 SingleSubscribeOn 的 subscribeActual 开始，之后的被观察者发送的的所有事件都会在新的线程中发送，不过 SingleSubscribeOn 的订阅依然是在原始线程，因此需要在原始线程中发送 onSubscribe 事件
+        //触发上游 n-1 的 subscribeActual 方法，一直到上游 0 的 subscribeActual 被调用为止，上游 0 的 subscribeActual 中开始发送各个事件，此时处于新线程
         source.subscribe(this);
     }
 
-    //
+    //SingleSubscribeOn 的 subscribeActual 中向下游 n-1 发送了 onSubscribe 事件，因此 SubscribeOnObserver(下游 n) 就无需向下游 n-1 发送 onSubscribe 事件了。
     @Override
     public void onSubscribe(Disposable d) {
         //设置真正的 Disposable，这是上游传过来的，
@@ -885,7 +899,7 @@ Observable.subscribeOn {
 1. 在事件达到之后才切线程
 ```java
 //Single.java
-//创建 SingleObserveOn 实例，将 this（上游）封装到 SingleObserveOn 中，变成一个新的上游。（SingleObserveOn 有点像桥接器）
+//创建 SingleObserveOn(上游 n，假设调用了 observeOn 的观察者是上游 n-1) 实例
 @CheckReturnValue
 @NonNull
 @SchedulerSupport(SchedulerSupport.CUSTOM)
@@ -896,26 +910,29 @@ public final Single<T> observeOn(@NonNull Scheduler scheduler) {
 
 
 //SingleObserveOn.java
-//实际是将 source（上游）， ObserveOnSingleObserver ，observer 三者桥接起来了，让 source 变成 ObserveOnSingleObserver 的上游，让 observer 变成 ObserveOnSingleObserver 的下游
+//创建 ObserveOnSingleObserver(下游 n)，让 ObserveOnSingleObserver(下游n) 订阅上游 n-1，触发上游 n-1 的 subscribeActual 方法，下游 n 会收到上游 n-1 发过来的 onSubscribe 事件，再往下（下游 n-1，下游 n-2，... ，下游 0）。这是在原始线程
 @Override
 protected void subscribeActual(final SingleObserver<? super T> observer) {
-    //创建 ObserveOnSingleObserver ，将传进来的 observer（最终下游）变成 ObserveOnSingleObserver 的下游，将 source 变成 ObserveOnSingleObserver 的上游
-    //source 传递 onSubscribe 事件到 ObserveOnSingleObserver 中。
     source.subscribe(new ObserveOnSingleObserver<>(observer, scheduler));
 }
 
 
+//ObserveOnSingleObserver
 @Override
 public void onSubscribe(Disposable d) {
     //ObserveOnSingleObserver 继承了 AtomicReference<Disposable> 类，实现了 Disposable, Runnable 接口，因此此处就是设置 ObserveOnSingleObserver 内部引用的 Disposable
-    //将 onSubscribe 事件传给下游
+    //ObserveOnSingleObserver 实现了 SingleObserver，Disposable，Runnable 接口，且是 AtomicReference<Disposable> 子类
+    //将 onSubscribe 事件传给下游 n-1
     if (DisposableHelper.setOnce(this, d)) {
         downstream.onSubscribe(this);
     }
 }
 
 
-//在收到 onSuccess 或者 onError 事件事，就会执行线程切换，在一个新的线程中执行自己（ObserveOnSingleObserver 也是一个 Runnable），然后将可取消的执行器设置到内部引用的 Disposable 中。
+
+//切换到一个新的线程，再新线程中执行 onError 和 onSuccess 方法。
+//在一个新的线程中执行 Runnable（ObserveOnSingleObserver 实现了 Runnable 接口），返回的 Disposable 其实是一个 Worker，它里面封装了 ExecutoerService（线程池）
+//Worker 的 dispose() 实际会关闭 ExecutorService
 @Override
 public void onSuccess(T value) {
     this.value = value;
@@ -924,8 +941,22 @@ public void onSuccess(T value) {
 }
 
 
-//取消内部线程切换的任务。
-//收到事件之后，ObserveOnSingleObserver 内部的 Disposable 是上游传过来的，因此此时若是下游取消则是直接通知上游去取消任务，在收到事件之后 ObserveOnSingleObserver 内部的 Disposable 就会被置换成线程切换的任务，这也是个可取消的任务，此时若是下游取消了任务，取消的就是线程切换的任务了。
+//ObserveOnSingleObserver.run() 是在新线程中执行的，因此 onError() 和 onSuccess() 事件的下发也是在新线程中完成的。
+//SingleObserveOn#ObserveOnSingleObserver.java
+@Override
+public void run() {
+    Throwable ex = error;
+    if (ex != null) {
+        downstream.onError(ex);
+    } else {
+        downstream.onSuccess(value);
+    }
+}
+
+
+
+//收到事件之后，ObserveOnSingleObserver 内部的 Disposable 是上游传过来的，因此此时若是下游取消则是直接通知上游去取消任务
+//在收到事件之后 ObserveOnSingleObserver 内部的 Disposable 就会被置换成调用 scheduler.scheduleDirect(this) 时返回的 Disposable，这也是一个 Worker 对象，里面封装了 ExecutorService。此时若是下游取消了任务，取消的就是线程切换的任务了。
 @Override
 public void dispose() {
     DisposableHelper.dispose(this);
