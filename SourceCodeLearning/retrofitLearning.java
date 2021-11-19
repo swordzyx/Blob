@@ -428,6 +428,8 @@ retrofitService.getRepos() {
         }
 
         //DefaultCallAdapterFactory.java
+        //返回一个 CallAdapter 对象，这里返回的 CallAdapter 实例会在 (Retrofit.create() -> ServiceMethod.loadServiceMethod -> )HttpServiceMethod.invoke 中保存，因为 DefaultCallAdapterFactory.get() 就是在 HttpServiceMethod.invoke() 中被调用的，get() 返回的 CallAdapter 实例会被保存在 callAdapter 成员中。
+        //在 HttpServiceMethod.invoke 方法中创建了 OkHttpCall 之后，会将 OkHttpCall 实例传入到 CallAdapter 的 adapt 方法中。
         @Override
         public @Nullable CallAdapter<?, ?> get(Type returnType, Annotation[] annotations, Retrofit retrofit) {
           if (getRawType(returnType) != Call.class) {
