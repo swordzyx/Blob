@@ -127,8 +127,9 @@ Retrofit.create {
                 //到这里就表明要反射的方法是接口中的方法。
                 args = args != null ? args : emptyArgs;
                 //isDefaultMethod 用于判断当前方法是否默认实现的 Java 方法（Java 平台），这是 Java 8 新加的一个特性，Java 8 之后可以在接口中的方法可以有默认实现，如果代理的方法有默认实现，则直接调用其默认实现。确保不代理 Java 8 的默认方法。
-                //platform 就是平台的意思，比如 Android，比如 Java8，Java7 这些都是平台，针对不同的平台，isDefaultMethod 会有不同的行为，但是需要对不同的平台都可以调用 isDefaultMethod() 方法，比如老版本的 Android 根本不支持 Java 8，也就不支持默认方法，但 Android 老版本依然要兼容，因此在老版本的 Android 上面调用 isDefaultMethod() 也要有返回值，通过 Platform 来做兼容。 isDefaultMethod 会判断当前是否
-                //回调用 loadServiceMethod 方法，这个方法返回一个 ， HttpServiceMethod 类型。
+                //platform 就是平台的意思，比如 Android，比如 Java8，Java7 这些都是平台，针对不同的平台，isDefaultMethod 会有不同的行为，但是需要对不同的平台都可以调用 isDefaultMethod() 方法，比如老版本的 Android 根本不支持 Java 8，也就不支持默认方法，但 Android 老版本依然要兼容，因此在老版本的 Android 上面调用 isDefaultMethod() 也要有返回值，通过 Platform 来做兼容。 isDefaultMethod 会判断当前是否支持 Java 8 特性，如果不支持，就返回 false
+                //回调用 loadServiceMethod 方法，它就是将接口中的方法加载出来， HttpServiceMethod 类型。loadServiceMethod 其实就是一个带缓存的加载，已经加载过的方法保存在一个 Map 里面缓存起来，之后要用直接到里面去取。
+                //loadServiceMethod 加载完方法之后，可以认为创建了方法的实例，然后执行这个实例的 invoke 方法，以此触发方法的调用
                 //所以调用的是 HttpServiceMethod.invoke 方法。
                 return platform.isDefaultMethod(method)
                     ? platform.invokeDefaultMethod(method, service, proxy, args)
@@ -190,7 +191,7 @@ Retrofit.create {
 retrofitService.getRepos() {
 
   0.1 
-  /*retrofitService.getRepos = loadServiceMethod(getRepos).invoke，
+  /*retrofitService.getRepos = loadServiceMethod(getRepos).invoke(args)，
   主要做了一下事情：
   （1）调用 RequestFactory.parseAnnotations 解析接口方法的注解，并将解析结果保存起来，返回的是一个 RequestFactory 对象，用于创建 okhttp3.Request
   （2）调用 createCallAdapter 创建 CallAdapter 并保存。返回的是一个新构造的 CallAdapter 对象，用于将 okhttp3 在 Retrofit 的代理类 OkHttpCall 转换成 ExecutorCallbackCall，这是 loadServiceMethod 返回的对象，实际开发中调用它的 enqueue 来发送网络请求。
@@ -200,7 +201,7 @@ retrofitService.getRepos() {
   loadServieMethod(getRepos) {
 
     0.1.1
-    //这里面完成了 RequestFactory 的创建，然后剩下的操作就转到 HttpServiceMthod 中处理了
+    //loadServiceMethod 其实就是一个带缓存的加载，如果 method 已经被加载过了，就直接到 serviceMethodCache 中去取，这是一个 Map，如果没有被加载过，就调用 ServiceMethod.parseAnnotations(...) 加载这个 method，然后缓存到 serviceMethodCache 中。整个 loadServiceMethod 的核心就是 ServiceMethod.parseAnnotations(...)。
     ServiceMethod.loadServieMethod() {
       //ServiceMethod
       ServiceMethod<?> loadServiceMethod(Method method) {
@@ -248,6 +249,7 @@ retrofitService.getRepos() {
 
           Annotation[] annotations = method.getAnnotations();
           Type adapterType; //接口方法的返回类型
+          //isKotlinSuspendFunction 是 kotlin 内容，它会判断这个方法是不是由 kotlin 的挂起方法所自动生成的 Java 方法。Retrofit 在 2.6 的时候已经支持 kotlin 的挂起方法了。在方法声明前加上 suspend 关键字，就能自动实现挂起，不过方法被挂起之后就要写相应的代码
           if (isKotlinSuspendFunction) {
             //如果是 Kotlin 方法
           } else {
@@ -560,6 +562,8 @@ retrofitService.getRepos() {
 
   0.2 
   /*
+  
+
   当调用接口中的函数是，实际回调用 SuspendForBody 中 invoke 函数。 SuspendForBody 是 HttpServiceMethod 的实现类。这里面
 
   首先将 loadServiceMethod 中保存 RequestFactory，CallAdapter，ResponseConverter，callFactory 传入 OkHttpCall 的构造函数中，构造出一个 OkHttpCall 对象
@@ -642,6 +646,83 @@ retrofitService.getRepos() {
 1. 
 /*这里了入口就是调用 ExecutorCallbackCall.enqueue() 函数，主要执行的工作就是调用 OkHttp3.Call.enqueue 发送网络请求，接着在接受到响应消息时，转换成需要的 Response<T> 类型之后，回调给 ExecutorCallbackCall ，这里面会通过 callbackExecutor 将线程切换到主线程，最终在主线程中处理响应消息*/
 call.enqueue(mCallback){
+
+  /* OkHttpCall.java：这个类实现了 Retrofit2 的 Call 接口。
+
+  核心代码：
+    createRawCall() ，它会创建一个 OkHttp3 的 Call 出来，这是 OkHttp 的东西，这里就是 Retrofit 偏低层的地方了。
+    OkHttp3.Call.enqueue()：调用 OkHttp3 的 Call 的 enqueue 方法
+  */
+  @Override
+  public void enqueue(final Callback<T> callback) {
+    Objects.requireNonNull(callback, "callback == null");
+
+    okhttp3.Call call;
+    Throwable failure;
+
+    synchronized (this) {
+      if (executed) throw new IllegalStateException("Already executed.");
+      executed = true;
+
+      call = rawCall;
+      failure = creationFailure;
+      if (call == null && failure == null) {
+        try {
+          call = rawCall = createRawCall();
+        } catch (Throwable t) {
+          throwIfFatal(t);
+          failure = creationFailure = t;
+        }
+      }
+    }
+
+    if (failure != null) {
+      callback.onFailure(this, failure);
+      return;
+    }
+
+    if (canceled) {
+      call.cancel();
+    }
+
+    call.enqueue(
+        new okhttp3.Callback() {
+          @Override
+          public void onResponse(okhttp3.Call call, okhttp3.Response rawResponse) {
+            Response<T> response;
+            try {
+              response = parseResponse(rawResponse);
+            } catch (Throwable e) {
+              throwIfFatal(e);
+              callFailure(e);
+              return;
+            }
+
+            try {
+              callback.onResponse(OkHttpCall.this, response);
+            } catch (Throwable t) {
+              throwIfFatal(t);
+              t.printStackTrace(); // TODO this is not great
+            }
+          }
+
+          @Override
+          public void onFailure(okhttp3.Call call, IOException e) {
+            callFailure(e);
+          }
+
+          private void callFailure(Throwable e) {
+            try {
+              callback.onFailure(OkHttpCall.this, e);
+            } catch (Throwable t) {
+              throwIfFatal(t);
+              t.printStackTrace(); // TODO this is not great
+            }
+          }
+        });
+  }
+
+
   //在 ExecutorCallbackCall 中重写了 enqueue 方法，因此猜测 call.enqueue 最终会调用到 ExecutorCallbackCall 中
   @Override
   public void enqueue(final Callback<T> callback) {
