@@ -86,6 +86,14 @@ Retrofit.build {
         callbackExecutor,
         validateEagerly);
   }
+
+  //Platform.java
+  List<? extends CallAdapter.Factory> defaultCallAdapterFactories(@Nullable Executor callbackExecutor) {
+    DefaultCallAdapterFactory executorFactory = new DefaultCallAdapterFactory(callbackExecutor);
+    return hasJava8Types
+        ? asList(CompletableFutureCallAdapterFactory.INSTANCE, executorFactory)
+        : singletonList(executorFactory);
+  }
 }
 
 Retrofit 中的动态代理的实现原理是什么？它代理的是我们创建的接口，会为我们的接口创建一个实现类，每当到调用接口中的方法是，就会通过一个回调接口来反射调用接口中的具体实现方法。
@@ -191,18 +199,18 @@ Retrofit.create {
 retrofitService.getRepos() {
 
   0.1 
-  /*retrofitService.getRepos = loadServiceMethod(getRepos).invoke(args)，
+  /*retrofitService.getRepos = loadServiceMethod(getRepos).invoke(args)，loadServiceMethod(getRepos) 返回一个 CallAdapted 对象，它是 HttpServiceMethod 的静态内部类，invoke(args) 在 HttpServiceMethod 中也有实现，因此这句代码会执行 HttpServiceMethod#invoke 方法，然后在 invoke 方法中执行 CallAdapted#adapt() 方法
   主要做了一下事情：
   （1）调用 RequestFactory.parseAnnotations 解析接口方法的注解，并将解析结果保存起来，返回的是一个 RequestFactory 对象，用于创建 okhttp3.Request
   （2）调用 createCallAdapter 创建 CallAdapter 并保存。返回的是一个新构造的 CallAdapter 对象，用于将 okhttp3 在 Retrofit 的代理类 OkHttpCall 转换成 ExecutorCallbackCall，这是 loadServiceMethod 返回的对象，实际开发中调用它的 enqueue 来发送网络请求。
   （3）调用 createResponseConverter 创建 ResponseConverter 并保存，这用于将 okhttp 中的 Response 对象转成我们需要的 Response 。
   （4）保存 Retrofit 中的 callFactory 对象并保存，这是一个 OkHttpClient 类型的实例，通过它创建 okhttp3 的 Call。
   （5）new 一个 SuspendForBody 对象并返回，之后调用的就是它的 invoke 方法 */
-  loadServieMethod(getRepos) {
+  loadServieMethod(getRepos) -> ServiceMethod.loadServieMethod() -> ServiceMethod.parseAnnotations(Retrofit retrofit, Method method) -> HttpServiceMethod.parseAnnotations(Retrofit retrofit, Method method, RequestFactory requestFactory) {
 
     0.1.1
     //loadServiceMethod 其实就是一个带缓存的加载，如果 method 已经被加载过了，就直接到 serviceMethodCache 中去取，这是一个 Map，如果没有被加载过，就调用 ServiceMethod.parseAnnotations(...) 加载这个 method，然后缓存到 serviceMethodCache 中。整个 loadServiceMethod 的核心就是 ServiceMethod.parseAnnotations(...)。
-    ServiceMethod.loadServieMethod() {
+    ServiceMethod.loadServieMethod()  {
       //ServiceMethod
       ServiceMethod<?> loadServiceMethod(Method method) {
         //所以我们所声明的接口中的方法其实是在解析完之后，保存到一个缓存区中，每当要加载新的方法时，先从这里面获取
@@ -241,7 +249,7 @@ retrofitService.getRepos() {
       }
 
       //HttpServiceMethod.parseAnnotations
-      //猜测 ResponseT 和 ReturnT 分别为从 HTTP 获取的响应类型以及该方法实际返回的数据类型。
+      //猜测 ResponseT 和 ReturnT 分别为从 HTTP 获取的响应类型以及该方法实际返回的数据类型。返回 CallAdapted 对象，它是 HttpServiceMethod 的静态内部类。
       static <ResponseT, ReturnT> HttpServiceMethod<ResponseT, ReturnT> parseAnnotations(Retrofit retrofit, Method method, RequestFactory requestFactory) {
           boolean isKotlinSuspendFunction = requestFactory.isKotlinSuspendFunction;
           boolean continuationWantsResponse = false;
@@ -363,7 +371,7 @@ retrofitService.getRepos() {
     }
 
     0.1.3
-    HttpServiceMethod.loadServiceMethod() {
+    HttpServiceMethod.loadServiceMethod() -> HttpServiceMethod.parseAnnotations(Retrofit retrofit, Method method, RequestFactory requestFactory) 中核心代码解析 {
       0.1.3.1
       /*
       1. 这里接收接口方法的返回值类型，还有在 Retrofit 初始化是保存的线程执行器（默认是 MainThreadExecutor）
@@ -389,13 +397,14 @@ retrofitService.getRepos() {
         }
 
         //Retrofit.java
+        //通过 callAdapterFactories.get(index) 取出 CallAdapter 然后返回，callAdapterFactories 在 Retrofit 构造函数中被初始化，Retrofit 构造函数则在 Retrofit.Builder.build() 中被执行
         public CallAdapter<?, ?> nextCallAdapter(@Nullable CallAdapter.Factory skipPast, Type returnType, Annotation[] annotations) {
           Objects.requireNonNull(returnType, "returnType == null");
           Objects.requireNonNull(annotations, "annotations == null");
 
           int start = callAdapterFactories.indexOf(skipPast) + 1;
           for (int i = start, count = callAdapterFactories.size(); i < count; i++) {
-            //调用 DefaultCallAdapterFactory.get(returnType, annotations, this)
+            //callAdapterFactories 是一个 ArrayList<CallAdapter.Factory> 对象，在 Retrofit.Builder().build() 中创建了 DefaultCallAdapterFactory 并将其添加到了 callAdapterFactories 中，所以这里调用 callAdapterFactories.get(i) 首先会返回 DefaultCallAdapterFactory 对象，然后执行 DefaultCallAdapterFactory.get(returnType, annotations, this)
             CallAdapter<?, ?> adapter = callAdapterFactories.get(i).get(returnType, annotations, this);
             if (adapter != null) {
               return adapter;
@@ -561,7 +570,7 @@ retrofitService.getRepos() {
   }
 
   0.2 
-  /*
+  /*retrofitService.getRepos = loadServiceMethod(getRepos).invoke(args) ，invoke 方法源码解析
   
 
   当调用接口中的函数是，实际回调用 SuspendForBody 中 invoke 函数。 SuspendForBody 是 HttpServiceMethod 的实现类。这里面
@@ -572,14 +581,21 @@ retrofitService.getRepos() {
 
   这里主要就是将我们所定义的网络请求操作方法信息（包括请求类型，请求参数等）封装到 ExecutorCallbackCall 中，并返回，用于稍后的请求发送。
   */
-  SuspendForBody.invoke {
+  HttpServiceMethod.invoke(args) {
 
     //HttpServiceMethod
     @Override
     final @Nullable ReturnT invoke(Object[] args) {
-      //创建 OkHttpCall 实例对象，这里可以看出 Retrofit 是基于 OkHttp 的。
+      //OkHttpCall 是 Retrofit 中的 Call，核心逻辑是创建 Okhttp3 的 call，然后通过 OkHttp3 的 Call 对象去发起一个网络请求，将请求的响应结果解析成 Retrofit 需要的对象，然后回调给通过 Retrofit 的 enqueue 方法发起网络请求时传进来的 Callback 对象。
+      //Retrofit 其实就是对 OkHttp 的封装
       Call<ResponseT> call = new OkHttpCall<>(requestFactory, args, callFactory, responseConverter);
       return adapt(call, args);
+    }
+
+    //HttpServiceMethod#CallAdapted#adapt(Call<ResponseT> call, Object[] args)：callAdapter 在创建 CallAdapted 对象时通过构造参数传进来，CallAdapted 在 HttpServiceMethod.parseAnnotations() 函数中创建，callAdapter 在 HttpServiceMethod.parseAnnotations() 中通过 createCallAdapter() 函数创建之后，然后传给 CallAdapted 构造函数的。
+    @Override
+    protected ReturnT adapt(Call<ResponseT> call, Object[] args) {
+      return callAdapter.adapt(call);
     }
 
 
@@ -651,7 +667,9 @@ call.enqueue(mCallback){
 
   核心代码：
     createRawCall() ，它会创建一个 OkHttp3 的 Call 出来，这是 OkHttp 的东西，这里就是 Retrofit 偏低层的地方了。
-    OkHttp3.Call.enqueue()：调用 OkHttp3 的 Call 的 enqueue 方法
+    OkHttp3.Call.enqueue()：调用 OkHttp3 的 Call 的 enqueue 方法，执行实际的网络请求
+    response = parseResponse(rawResposne)：解析请求的响应，然后返回 Retrofit 的 Response。因为 Okhttp3 是一个底层的库，拿到的是一个字节的序列，而 Retrofit 需要的是 Repo 对象，要将字节序列转化成 Retrofit 需要的对象
+    callback.onResponse(OkHttpCall.this, response)：这个 Callback 是使用 Retrofit 的 enqueue 进行网络请求时传进来的 callback。
   */
   @Override
   public void enqueue(final Callback<T> callback) {
@@ -685,6 +703,7 @@ call.enqueue(mCallback){
       call.cancel();
     }
 
+    //调用 OKHttp3 的 Call 的 enqueue 方法，来做实际的网络请求操作。
     call.enqueue(
         new okhttp3.Callback() {
           @Override
