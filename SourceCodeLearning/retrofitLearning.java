@@ -55,8 +55,7 @@ Retrofit.build {
     //保存 callbackExecutor，也可以通过 Builder.callbackExecutor 进行赋值，也是可以由开发者自定义的。
     Executor callbackExecutor = this.callbackExecutor;
     if (callbackExecutor == null) {
-      //defauCallbackExecutor 在 Android 端返回的是 MainThreadExecutor ，位于 Platform.java
-      //猜测是指定当收到响应时，在哪个线程中进行处理，默认情况下就是主线程了。
+      //defauCallbackExecutor 在 Android 端返回的是 MainThreadExecutor （主线程执行器），位于 Platform.java。它会传给 DefaultCallAdapterFactory，在 HttpServiceMethod.loadServiceMethod() 中从 DefaultCallAdapterFactories 中获取 CallAdapter 时，这个 MainThreadExecutor 会传给 CallAdapter，执行 retrofitService.getRepos(Callback) 时， OkHttpCall 会经过 CallAdapter 的包装之后转成 ExecutorCallbackCall，这个 ExecutorCallbackCall 会作为 retrofitService.getRepos() 的返回结果。ExecutorCallback 其实就是置换了getRepos 传进去的 Callback，会先通过 MainThreadExecutor 切换到主线程之后，在执行 callback 的回调。
       callbackExecutor = platform.defaultCallbackExecutor();
     }
 
@@ -93,6 +92,12 @@ Retrofit.build {
     return hasJava8Types
         ? asList(CompletableFutureCallAdapterFactory.INSTANCE, executorFactory)
         : singletonList(executorFactory);
+  }
+
+  //Platform.java#Andorid
+  @Override
+  public Executor defaultCallbackExecutor() {
+    return new MainThreadExecutor();
   }
 }
 
@@ -249,7 +254,7 @@ retrofitService.getRepos() {
       }
 
       //HttpServiceMethod.parseAnnotations
-      //猜测 ResponseT 和 ReturnT 分别为从 HTTP 获取的响应类型以及该方法实际返回的数据类型。返回 CallAdapted 对象，它是 HttpServiceMethod 的静态内部类。
+      //猜测 ResponseT 和 ReturnT 分别为从 HTTP 获取的响应类型以及该方法实际返回的数据类型。返回 CallAdapted 对象，它是 HttpServiceMethod 的静态内部类，同时也是 HttpServiceMethod 的子类。
       static <ResponseT, ReturnT> HttpServiceMethod<ResponseT, ReturnT> parseAnnotations(Retrofit retrofit, Method method, RequestFactory requestFactory) {
           boolean isKotlinSuspendFunction = requestFactory.isKotlinSuspendFunction;
           boolean continuationWantsResponse = false;
@@ -429,7 +434,8 @@ retrofitService.getRepos() {
 
         //DefaultCallAdapterFactory.java
         //返回一个 CallAdapter 对象，这里返回的 CallAdapter 实例会在 (Retrofit.create() -> ServiceMethod.loadServiceMethod -> )HttpServiceMethod.invoke 中保存，因为 DefaultCallAdapterFactory.get() 就是在 HttpServiceMethod.invoke() 中被调用的，get() 返回的 CallAdapter 实例会被保存在 callAdapter 成员中。
-        //在 HttpServiceMethod.invoke 方法中创建了 OkHttpCall 之后，会将 OkHttpCall 实例传入到 CallAdapter 的 adapt 方法中。
+        //在 HttpServiceMethod.invoke 方法中创建了 OkHttpCall 之后，会将 OkHttpCall 实例传入到 CallAdapter 的 adapt 方法中。然后 callAdapter.adapt() 返回 ExecutorCallbackCall() 对象，所以 callAdapter 其实是对 OkHttpCall 做了一个转换操作。
+        //这里返回的 ExecutorCallbackCall 对象就是执行 retrofitService.getRepos("zerolans") 时返回的 Call 对象，之后执行的 enqueue 也是执行 ExecutorCallback 中的 enqueue 方法。
         @Override
         public @Nullable CallAdapter<?, ?> get(Type returnType, Annotation[] annotations, Retrofit retrofit) {
           if (getRawType(returnType) != Call.class) {
@@ -664,6 +670,38 @@ retrofitService.getRepos() {
 1. 
 /*这里了入口就是调用 ExecutorCallbackCall.enqueue() 函数，主要执行的工作就是调用 OkHttp3.Call.enqueue 发送网络请求，接着在接受到响应消息时，转换成需要的 Response<T> 类型之后，回调给 ExecutorCallbackCall ，这里面会通过 callbackExecutor 将线程切换到主线程，最终在主线程中处理响应消息*/
 call.enqueue(mCallback){
+
+  //ExecutorCallbackCall.java
+  //delegate 是调用 ExecutorCallbackCall 构造方法时传进来的，是一个 Call 对象，在 HttpServiceMethod.invoke() 中传进来的是 OkHttpCall。
+  //ExecutorCallbackCall 是对 callback 做了一个置换，做了一个线程切换的操作之后，再去回调 callback 的方法
+  @Override
+  public void enqueue(final Callback<T> callback) {
+    Objects.requireNonNull(callback, "callback == null");
+
+    //callbackExecutor 是用来切线程的。这是在 Retrofit.Builder().build() 中通过 “platform.defaultCallbackExecutor()” 赋值的，返回的是一个 MainThreadExecutor，一个主线程执行器。
+    //所以 ExecutorCallbackCall 其实就是在收到网络请求的响应之后，将当前工作线程切换到主线程，然后再回调 callback。ExecutorCallbackCall 是将 callback 的 onFailure 和 onResponse 往前台切
+    delegate.enqueue(
+        new Callback<T>() {
+          @Override
+          public void onResponse(Call<T> call, final Response<T> response) {
+            callbackExecutor.execute(
+                () -> {
+                  if (delegate.isCanceled()) {
+                    // Emulate OkHttp's behavior of throwing/delivering an IOException on
+                    // cancellation.
+                    callback.onFailure(ExecutorCallbackCall.this, new IOException("Canceled"));
+                  } else {
+                    callback.onResponse(ExecutorCallbackCall.this, response);
+                  }
+                });
+          }
+
+          @Override
+          public void onFailure(Call<T> call, final Throwable t) {
+            callbackExecutor.execute(() -> callback.onFailure(ExecutorCallbackCall.this, t));
+          }
+        });
+  }
 
   /* OkHttpCall.java：这个类实现了 Retrofit2 的 Call 接口。
 
