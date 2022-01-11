@@ -44,7 +44,7 @@ Dispatcher.enqueue() {
       //ArrayDeque 官方介绍：https://docs.oracle.com/en/java/javase/11/docs/api/java.base/java/util/ArrayDeque.html
       readyAsyncCalls.add(call)
 
-      //检查当前是否存在对于同一主机的请求，如果有则直接重用。
+      //尝试找到当前 AsyncCall 所访问的主机有没有请求已经在进行了，如果有的话就把请求里面记录的这个主机正在处理的请求数拿过来
       if (!call.call.forWebSocket) {
         val existingCall = findExistingCallWithHost(call.host)
         if (existingCall != null) call.reuseCallsPerHostFrom(existingCall)
