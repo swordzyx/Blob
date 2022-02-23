@@ -290,7 +290,7 @@ configureProject {
 }
 ```
 
-```java
+```java  
 //4.0.1
 
 configureExtension {
@@ -403,6 +403,55 @@ configureExtension {
         //为测试 apk 创建特殊的配置，确保在运行测试之前已经安装好了要测试的 apk
         createAndroidTestUtilConfiguration();
 	}
+
+
+
+    //AppPlugin.java  创建一个扩展，getExtensionClass() 返回此扩展的实现类，返回 BaseAppModuleExtension.class，因此 project.getExtensions().create(...) 实际创建一个 BaseAppModuleExtension 对象。
+    protected AppExtension createExtension(DslServices dslServices, GlobalScope globalScope, DslContainerProvider<DefaultConfig, BuildType, ProductFlavor, SigningConfig> dslContainers, NamedDomainObjectContainer<BaseVariantOutput> buildOutputs, ExtraModelInfo extraModelInfo) {
+        return (AppExtension)this.project.getExtensions().create("android", this.getExtensionClass(), new Object[]{dslServices, globalScope, buildOutputs, dslContainers.getSourceSetManager(), extraModelInfo, new ApplicationExtensionImpl(dslServices, dslContainers)});
+    }
+
+
+    //BaseAppModuleExtension.kt
+    open class BaseAppModuleExtension(
+        dslServices: DslServices,
+        globalScope: GlobalScope,
+        buildOutputs: NamedDomainObjectContainer<BaseVariantOutput>,
+        sourceSetManager: SourceSetManager,
+        extraModelInfo: ExtraModelInfo,
+        private val publicExtensionImpl: ApplicationExtensionImpl
+    ) : AppExtension(
+        dslServices,
+        globalScope,
+        buildOutputs,
+        sourceSetManager,
+        extraModelInfo,
+        true
+    ), InternalApplicationExtension by publicExtensionImpl,
+        ActionableVariantObjectOperationsExecutor<ApplicationVariant<ApplicationVariantProperties>, ApplicationVariantProperties> by publicExtensionImpl {
+            ......
+        }
+
+    //AppExtension.groovy    https://android.googlesource.com/platform/tools/build/+/refs/heads/master/gradle/src/main/groovy/com/android/build/gradle/AppExtension.groovy
+    public class AppExtension extends BaseExtension {
+
+        AppExtension(AppPlugin plugin, ProjectInternal project, Instantiator instantiator,
+                     NamedDomainObjectContainer<DefaultBuildType> buildTypes,
+                     NamedDomainObjectContainer<DefaultProductFlavor> productFlavors,
+                     NamedDomainObjectContainer<SigningConfig> signingConfigs) {
+            super(plugin, project, instantiator)
+            this.buildTypes = buildTypes
+            this.productFlavors = productFlavors
+            this.signingConfigs = signingConfigs
+        }
+
+        ......
+
+        //获取所有 apk 的构建变体
+        public DefaultDomainObjectSet<ApplicationVariant> getApplicationVariants() {
+            return applicationVariantList
+        }
+    }
 }
 ```
 
