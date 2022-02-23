@@ -1,0 +1,1176 @@
+import org.w3c.dom.Document
+import org.w3c.dom.Element
+
+import javax.xml.parsers.DocumentBuilderFactory
+
+apply plugin: 'com.android.application'
+apply plugin: 'com.google.firebase.crashlytics'
+apply from: 'dexAverage.gradle'
+apply plugin: 'com.android.asset-pack'
+
+rootProject.appGameResource = ''
+rootProject.svnVersionCode = %b2SvnVersionCode%
+rootProject.subPackageTag = %subPackageTag%
+
+android {
+    //compileSdkVersion & buildToolsVersion 版本号改动要一起
+    compileSdkVersion %targetApi%
+    buildToolsVersion '%targetApi%.0.3'
+
+	useLibrary 'org.apache.http.legacy'
+    defaultConfig {
+        applicationId "com.xlcw.sdk"
+        minSdkVersion 22
+        targetSdkVersion %targetApi%
+        versionCode %versionCode%
+        versionName "%versionName%"
+        multiDexEnabled true
+
+        ndk {
+            abiFilters %abiFilters%
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility 1.8
+        targetCompatibility 1.8
+    }
+
+    dexOptions {
+        // Prevent OutOfMemory with MultiDex during the build phase
+        javaMaxHeapSize "4g"
+    }
+
+    signingConfigs {
+
+        String keyStoreDir = (rootProject.getRootDir().getAbsolutePath()
+                + File.separator + 'keystore' + File.separator)
+
+        //迅龙密钥
+        myConfig {
+            storeFile file(keyStoreDir + 'xlcw_best2.jks')//签名文件路径
+            storePassword "XLCW1234"
+            keyAlias "xlcw_best2"
+            keyPassword "XLCW1234"  //签名密码
+        }
+
+        //泰国密钥
+        thailandConfig {
+            storeFile file(keyStoreDir + 'hsjg_uu_pkcs12.jks')//签名文件路径
+            storePassword "123456"
+            keyAlias "hsjguu"
+            keyPassword "123456"  //签名密码
+        }
+
+        //越南密钥
+        funtapConfig {
+            storeFile file(keyStoreDir + 'vn.funtap.linhgioi3d.jks')//签名文件路径
+            storePassword "08E4A200829B09255CA756A19F8CCCE8"
+            keyAlias "f62_vn"
+            keyPassword "08E4A200829B09255CA756A19F8CCCE8"
+        }
+
+        //新马台密钥
+        r2gameNYJ2Config {
+            storeFile file(keyStoreDir + 'r2game-nyj2.jks')
+            storePassword 'nyj2666888'
+            keyAlias 'nyj2'
+            keyPassword 'nyj2666888'
+
+            v1SigningEnabled true
+            v2SigningEnabled true
+        }
+
+        //新马台2密钥
+        eskyfunConfig {
+            storeFile file(keyStoreDir + 'eskyfun.jks')
+            storePassword 'XLCW1234'
+            keyAlias 'xlcw_best2_eskyfun'
+            keyPassword 'eskyfun1234'
+
+            v1SigningEnabled true
+            v2SigningEnabled true
+
+            // SHA1: F1:AE:24:B1:0B:A6:3B:E3:90:C4:4D:49:8A:6B:E1:3D:A4:D5:55:FC
+            // SHA256: C3:E0:57:18:21:EE:58:1B:F0:3B:6A:9A:30:7A:43:3A:6B:98:57:46:DC:5D:A9:AE:B7:34:32:C2:6E:07:4F:6F
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            //移除无用的资源文件
+            shrinkResources false
+            zipAlignEnabled true
+            debuggable false
+            jniDebuggable false
+        }
+        debug{
+            signingConfig  signingConfigs.myConfig
+        }
+    }
+
+    repositories {
+        flatDir {
+            dirs ('libs',
+                    '../xlcw/libs',
+                    '../xlcw2/libs',
+                    '../reyun/libs', '../toutiao/libs',
+                    '../kuaishou/libs', '../gdt/libs',
+                    '../baiduaction/libs',
+
+                    '../xinghuisdk/libs', '../umeng/libs',
+
+                    '../thailand/libs',
+
+                    '../funtap/libs',
+
+                    '../niceplay/libs', '../bugly/libs',
+
+                    '../bilibili/libs',
+
+                    '../r2game/libs',
+                    '../eskyfun/libs',
+                    '../eskyfun_huawei/libs',
+                    '../russia/libs',
+                    '../russia_huawei/libs',
+            )
+        }
+    }
+
+    assetPacks = [":asset-pack-name", ":asset-pack2-name"]
+    assetPack {
+        packName = "asset-pack-name" // Tên thư mục cho gói nội dung
+        dynamicDelivery {
+            deliveryType = "[ install-time | fast-follow | on-demand ]"
+        }
+    }
+
+    assetPacks = [%assets_module%]
+
+    flavorDimensions "default"
+    productFlavors {
+
+        bilibili {
+            applicationId "com.xlcw.tgame.cn.bilibili"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+
+        funtap {
+            targetSdkVersion 30
+            minSdkVersion 23
+            applicationId "vn.funtap.linhgioi3d"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.funtapConfig
+        }
+
+        korea {
+            applicationId "com.a.one.hskr"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        korea_onestore {
+            applicationId "com.onestore.one.hskr"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        korea_samsung {
+            applicationId "com.s.one.hskr"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        korea_third {
+            applicationId "com.web.one.hskr"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+
+        niceplay {
+            applicationId "com.a.one.hs"
+//            versionCode 21
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+//            resValue "string", "test", "${applicationId}"
+//            resValue "string", "package_name", "buidlgrad"  //这个优先级比productFlavor目录下的res资源文件低
+            signingConfig  signingConfigs.myConfig
+        }
+        niceplay_samsung {
+            applicationId "com.s.one.hs"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        niceplay_third {
+            applicationId "com.web.one.hs"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+
+        r2game {
+            targetSdkVersion 30
+            applicationId "com.acala.nyj.ft"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.r2gameNYJ2Config
+        }
+
+        eskyfun {
+            targetSdkVersion 30
+            applicationId "com.meta.twzb"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.eskyfunConfig
+        }
+        eskyfun_google {
+            targetSdkVersion 30
+            applicationId "com.meta.twigp"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.eskyfunConfig
+        }
+        eskyfun_huawei {
+            targetSdkVersion 30
+            applicationId "com.meta.huawei"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.eskyfunConfig
+        }
+
+        thailand {
+            targetSdkVersion 30
+            applicationId "com.uu100hsjg.th.gp"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.thailandConfig
+        }
+
+        russia {
+            targetSdkVersion 30
+            applicationId "com.espritgames.rpg.nine.songs"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.myConfig
+        }
+
+        russia_huawei {
+            targetSdkVersion 30
+            applicationId "com.espritgames.rpg.nine.songs.HUAWEI"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.myConfig
+        }
+
+        xinghui {
+            applicationId "com.xhrs.nyjmr"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.channel.XingHuiApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        xinghui_jryx_hsjg {
+            applicationId "com.xhqd.hwynyjmrjryx"
+            manifestPlaceholders = [
+                    APPLICATION_NAME : "com.xlcw.sdk.channel.XingHuiApplication"
+                    ,   APPLOG_SCHEME : applicationId
+            ]
+            signingConfig  signingConfigs.myConfig
+        }
+        xinghui_subchannel {
+            applicationId getXingHuiApplicationIdWithSubPackageTag(rootProject.subPackageTag)
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.channel.XingHuiApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+
+        xlcw {
+            applicationId "com.xwgame.best2.xll1099"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        xlcw_bd_ty {
+            applicationId "com.xwgame.best2.xll1099"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        xlcw_bd_ty2 {
+            applicationId "com.xwgame.best2.xll1099"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        xlcw_gdt_clksdxhsj{
+            applicationId "com.xwgame.best2.cll1099"
+            manifestPlaceholders = [APPLICATION_NAME: "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.myConfig
+        }
+        xlcw_gdt_qt {
+            applicationId "com.xwgame.best2.jhl1099"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        xlcw_gdt_ty {
+            applicationId "com.xwgame.best2.xll1099"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        xlcw_gdt_xll {
+            applicationId "com.xwgame.best2.lll1099"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        xlcw_ks_qt {
+            applicationId "com.xwgame.best2.jhl1099"
+            manifestPlaceholders = [APPLICATION_NAME: "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.myConfig
+        }
+        xlcw_gdt_hwksh {
+            applicationId "com.xwgame.best2.hsl1099"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        xlcw_ks_hwksh {
+            applicationId "com.xwgame.best2.hsl1099"
+            manifestPlaceholders = [APPLICATION_NAME: "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.myConfig
+        }
+        xlcw_gdt_hwksh_1095 {
+            applicationId "com.xwgame.best2.hsl1099"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        xlcw_ks_hwksh_1095 {
+            applicationId "com.xwgame.best2.hsl1099"
+            manifestPlaceholders = [APPLICATION_NAME: "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.myConfig
+        }
+        xlcw_ks_ty {
+            applicationId "com.xwgame.best2.xll1099"
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+        xlcw_ks_xll {
+            applicationId "com.xwgame.best2.lll1099"
+            manifestPlaceholders = [APPLICATION_NAME: "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.myConfig
+        }
+        xlcw_xf_gdt_ty{
+            applicationId "com.xwgame.best2.xll1099"
+            manifestPlaceholders = [APPLICATION_NAME: "com.xlcw.sdk.XLApplication"]
+            signingConfig signingConfigs.myConfig
+        }
+        xlcw_subchannel {
+            //子渠道名,用于打自买量子渠道包
+            applicationId getXlcwApplicationIdWithSubPackageTag(rootProject.subPackageTag)
+            manifestPlaceholders = [APPLICATION_NAME : "com.xlcw.sdk.XLApplication"]
+            signingConfig  signingConfigs.myConfig
+        }
+
+    }
+
+    sourceSets {
+        main {
+            def assetsSrcDirs = ['src/main/assets']
+            def jniLibsSrcDirs = ['src/main/jniLibs']
+
+            if(rootProject.appGameResource != ""){
+                assetsSrcDirs.add(rootProject.appGameResource + '/src/main/assets')
+                jniLibsSrcDirs.add(rootProject.appGameResource + '/src/main/jniLibs')
+            }
+
+            assets.srcDirs = assetsSrcDirs
+            jniLibs.srcDirs = jniLibsSrcDirs
+            println "\n--[Black sourceSets main] assets.srcDirs:" + assets.srcDirs
+            println "\n--[Black sourceSets main] jniLibs.srcDirs:" + jniLibs.srcDirs
+
+            java.srcDirs = ['src/main/java']
+            res.srcDirs = ['src/main/res']
+            manifest.srcFile 'src/main/AndroidManifest.xml'
+        }
+
+        bilibili {
+            assets.srcDirs = ['src/bilibili/assets']
+            jniLibs.srcDirs = ['src/bilibili/jniLibs']
+        }
+
+        funtap {
+            assets.srcDirs = ['src/funtap/assets']
+            jniLibs.srcDirs = ['src/funtap/jniLibs']
+        }
+
+        korea {
+            assets.srcDirs = ['src/korea/assets']
+            jniLibs.srcDirs = ['src/korea/jniLibs']
+            java.srcDirs = ['src/korea/java', 'src/korea/java_self']
+            res.srcDirs = ["src/korea/res", 'src/korea/res_self']
+            manifest.srcFile 'src/korea/AndroidManifest.xml'
+        }
+        korea_onestore {
+            assets.srcDirs = ['src/korea_onestore/assets']
+            jniLibs.srcDirs = ['src/korea/jniLibs']
+            java.srcDirs = ['src/korea/java', 'src/korea_onestore/java']
+            res.srcDirs = ["src/korea/res", 'src/korea_onestore/res']
+            manifest.srcFile 'src/korea/AndroidManifest.xml'
+        }
+        korea_samsung {
+            assets.srcDirs = ['src/korea_samsung/assets']
+            jniLibs.srcDirs = ['src/korea/jniLibs']
+            java.srcDirs = ['src/korea/java', 'src/korea_samsung/java']
+            res.srcDirs = ["src/korea/res", 'src/korea_samsung/res']
+            manifest.srcFile 'src/korea_samsung/AndroidManifest.xml'
+        }
+        korea_third {
+            assets.srcDirs = ['src/korea_third/assets']
+            jniLibs.srcDirs = ['src/korea/jniLibs']
+            java.srcDirs = ['src/korea/java', 'src/korea_third/java']
+            res.srcDirs = ["src/korea/res", 'src/korea_third/res']
+            manifest.srcFile 'src/korea_third/AndroidManifest.xml'
+        }
+
+        niceplay {
+            assets.srcDirs = ['src/niceplay/assets']
+            jniLibs.srcDirs = ['src/niceplay/jniLibs']
+            java.srcDirs = ['src/niceplay/java', 'src/niceplay/java_self']
+            res.srcDirs = ["src/niceplay/res", 'src/niceplay/res_self']
+            manifest.srcFile 'src/niceplay/AndroidManifest.xml'
+        }
+        niceplay_samsung{
+            assets.srcDirs = ['src/niceplay_samsung/assets']
+            jniLibs.srcDirs = ['src/niceplay/jniLibs']
+            java.srcDirs = ['src/niceplay/java', 'src/niceplay_samsung/java', 'src/niceplay_samsung/java_self']
+            res.srcDirs = ["src/niceplay/res", 'src/niceplay_samsung/res', 'src/niceplay_samsung/res_self']
+            manifest.srcFile 'src/niceplay_samsung/AndroidManifest.xml'
+        }
+        niceplay_third{
+            assets.srcDirs = ['src/niceplay_third/assets']
+            jniLibs.srcDirs = ['src/niceplay/jniLibs']
+            java.srcDirs = ['src/niceplay/java', 'src/niceplay_samsung/java', 'src/niceplay_third/java']
+            res.srcDirs = ["src/niceplay/res", 'src/niceplay_samsung/res', 'src/niceplay_third/res']
+            manifest.srcFile 'src/niceplay_third/AndroidManifest.xml'
+        }
+
+        r2game{
+            assets.srcDirs = ['src/r2game/assets']
+            jniLibs.srcDirs = ['src/r2game/jniLibs']
+        }
+
+        eskyfun {
+            assets.srcDirs = ['src/eskyfun/assets']
+            jniLibs.srcDirs = ['src/eskyfun/jniLibs']
+        }
+        eskyfun_google {
+            assets.srcDirs = ['src/eskyfun/assets']
+            jniLibs.srcDirs = ['src/eskyfun/jniLibs']
+        }
+        eskyfun_huawei {
+            assets.srcDirs = ['src/eskyfun_huawei/assets']
+            jniLibs.srcDirs = ['src/eskyfun_huawei/jniLibs']
+        }
+
+        thailand{
+            assets.srcDirs = ['src/thailand/assets']
+            jniLibs.srcDirs = ['src/thailand/jniLibs']
+        }
+
+        russia{
+            assets.srcDirs = ['src/russia/assets']
+            jniLibs.srcDirs = ['src/russia/jniLibs']
+        }
+
+        russia_huawei{
+            assets.srcDirs = ['src/russia_huawei/assets']
+            jniLibs.srcDirs = ['src/russia_huawei/jniLibs']
+            java.srcDirs = ['src/russia_huawei/java','src/russia/java']
+        }
+
+        xinghui {
+            assets.srcDirs = ['src/xinghui/assets']
+            jniLibs.srcDirs = ['src/xinghui/jniLibs']
+            res.srcDirs = ["src/xinghui/res", 'src/xinghui/res_self']
+        }
+        xinghui_jryx_hsjg {
+            java.srcDirs = ['src/xinghui/java']
+            res.srcDirs = ["src/xinghui/res", 'src/xinghui_jryx_hsjg/res']
+        }
+        xinghui_subchannel {
+            assets.srcDirs = ["src/xinghui_subchannel/all_baseConfig/assets",
+                              "src/xinghui_subchannel/" + rootProject.subPackageTag + "/assets"]
+            jniLibs.srcDirs = ["src/xinghui_subchannel/all_baseConfig/jniLibs",
+                               "src/xinghui_subchannel/" + rootProject.subPackageTag + "/jniLibs"]
+            java.srcDirs = ["src/xinghui/java",
+                            "src/xinghui_subchannel/all_baseConfig/java",
+                            "src/xinghui_subchannel/" + rootProject.subPackageTag + "/java"]
+            res.srcDirs = ["src/xinghui/res",
+                           "src/xinghui_subchannel/all_baseConfig/res",
+                           "src/xinghui_subchannel/" + rootProject.subPackageTag + "/res"]
+        }
+
+        xlcw {
+            assets.srcDirs = ['src/xlcw/assets']
+            jniLibs.srcDirs = ['src/xlcw/jniLibs']
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw/java_self']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw/res_self']
+        }
+        xlcw_bd_ty {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_bd_ty/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_bd_ty/res']
+        }
+        xlcw_bd_ty2 {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_bd_ty2/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_bd_ty2/res']
+        }
+        xlcw_gdt_clksdxhsj{
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_gdt_clksdxhsj/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_gdt_clksdxhsj/res']
+        }
+        xlcw_gdt_qt {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_gdt_qt/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_gdt_qt/res']
+        }
+        xlcw_gdt_ty {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_gdt_ty/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_gdt_ty/res']
+        }
+        xlcw_gdt_xll {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_gdt_xll/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_gdt_xll/res']
+        }
+        xlcw_ks_qt {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_ks_qt/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_ks_qt/res']
+        }
+        xlcw_gdt_hwksh {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_gdt_hwksh/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_gdt_hwksh/res']
+        }
+        xlcw_ks_hwksh {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_ks_hwksh/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_ks_hwksh/res']
+        }
+        xlcw_gdt_hwksh_1095 {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_gdt_hwksh_1095/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_gdt_hwksh_1095/res']
+        }
+        xlcw_ks_hwksh_1095 {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_ks_hwksh_1095/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_ks_hwksh_1095/res']
+        }
+        xlcw_ks_ty {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_ks_ty/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_ks_ty/res']
+        }
+        xlcw_ks_xll {
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_ks_xll/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_ks_xll/res']
+        }
+        xlcw_xf_gdt_ty{
+            java.srcDirs = ['src/xlcw/java', 'src/xlcw_xf_gdt_ty/java']
+            res.srcDirs = ["src/xlcw/res", 'src/xlcw_xf_gdt_ty/res']
+        }
+        xlcw_subchannel{
+            assets.srcDirs = ["src/xlcw_subchannel/all/assets",
+                              "src/xlcw_subchannel/" + rootProject.subPackageTag + "/assets"]
+            jniLibs.srcDirs = ["src/xlcw_subchannel/all/jniLibs",
+                               "src/xlcw_subchannel/" + rootProject.subPackageTag + "/jniLibs"]
+            java.srcDirs = ["src/xlcw/java",
+                            "src/xlcw_subchannel/all/java",
+                            "src/xlcw_subchannel/" + rootProject.subPackageTag + "/java"]
+            res.srcDirs = ["src/xlcw/res",
+                           "src/xlcw_subchannel/all/res",
+                           "src/xlcw_subchannel/" + rootProject.subPackageTag + "/res"]
+            manifest.srcFile 'src/xlcw_subchannel/all/AndroidManifest.xml'
+        }
+
+    }
+
+
+    lintOptions{
+        //lint 遇到 error 时继续 构建
+        abortOnError false
+        //build release 版本 时 开启lint 检测
+        checkReleaseBuilds false
+        // 防止在发布的时候出现因MissingTranslation导致Build Failed!
+        disable 'MissingTranslation'
+    }
+
+    aaptOptions {
+        cruncherEnabled  false
+        noCompress 'ogv','ab'
+    }
+
+}
+
+dependencies {
+    if(rootProject.appGameResource != ""){
+        implementation fileTree(dir: (rootProject.appGameResource + '/libs')
+                , include: [
+                    'unity-classes.jar'
+                    , 'AVProVideo-*.jar'
+                    , 'Xlcw_BestLoading_Tools_*.jar'
+                ]
+        )
+    }
+
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation 'androidx.appcompat:appcompat:1.1.0'
+    implementation 'androidx.multidex:multidex:2.0.1'
+    implementation 'com.google.code.gson:gson:2.8.5'
+    implementation (name: 'check_permission_release_2.0.2', ext: 'aar')
+    /*implementation (name: 'data_analyse_best2_1.1.0', ext: 'aar')*/
+
+    implementation project(':DataAnalyse')
+    implementation project(":DockCompat")
+    compileOnly project(':ScanCode')
+
+    //以上为整个工程的中间件依赖库
+    //以下为各个地区及渠道的依赖库
+
+    bilibiliImplementation project(':bilibili')
+
+    funtapImplementation project(':funtap')
+    funtapImplementation project(':ScanCode')
+
+    koreaImplementation project(':niceplay')
+    korea_onestoreImplementation project(':niceplay')
+    korea_samsungImplementation project(':niceplay')
+    korea_thirdImplementation project(':niceplay')
+
+    niceplayImplementation project(':niceplay')
+    niceplay_samsungImplementation project(':niceplay')
+    niceplay_thirdImplementation project(':niceplay')
+
+    r2gameImplementation project(':r2game')
+
+    eskyfunImplementation project(':eskyfun')
+    eskyfun_googleImplementation project(':eskyfun')
+    eskyfun_huaweiImplementation project(':eskyfun_huawei')
+
+    thailandImplementation project(':thailand')
+
+    russiaImplementation project(':russia')
+    russia_huaweiImplementation project(':russia')
+
+    xinghuiImplementation project(':xinghuisdk')
+    xinghuiImplementation project(':ScanCode')
+
+    xinghui_jryx_hsjgImplementation project(':xinghuisdk')
+    xinghui_jryx_hsjgImplementation project(':ttgame')
+    xinghui_jryx_hsjgImplementation project(':ScanCode')
+
+    xinghui_subchannelImplementation project(':xinghuisdk')
+    xinghui_subchannelImplementation project(':ScanCode')
+
+    xlcwImplementation project(':xlcw')
+    xlcwImplementation project(':reyun')
+    xlcwImplementation project(':toutiao')
+    xlcwCompileOnly project(':kuaishou')
+    xlcwCompileOnly project(':gdt')
+    xlcwCompileOnly project(':baiduaction')
+    xlcwImplementation project(':ScanCode')
+
+    xlcw_bd_tyImplementation project(':xlcw')
+    xlcw_bd_tyImplementation project(':reyun')
+    xlcw_bd_tyCompileOnly project(':toutiao')
+    xlcw_bd_tyCompileOnly project(':kuaishou')
+    xlcw_bd_tyCompileOnly project(':gdt')
+    xlcw_bd_tyImplementation project(':baiduaction')
+    xlcw_bd_tyImplementation project(':ScanCode')
+
+    xlcw_bd_ty2Implementation project(':xlcw')
+    xlcw_bd_ty2Implementation project(':reyun')
+    xlcw_bd_ty2CompileOnly project(':toutiao')
+    xlcw_bd_ty2CompileOnly project(':kuaishou')
+    xlcw_bd_ty2CompileOnly project(':gdt')
+    xlcw_bd_ty2Implementation project(':baiduaction')
+    xlcw_bd_ty2Implementation project(':ScanCode')
+
+    xlcw_gdt_tyImplementation project(':xlcw')
+    xlcw_gdt_tyImplementation project(':reyun')
+    xlcw_gdt_tyCompileOnly project(':toutiao')
+    xlcw_gdt_tyCompileOnly project(':kuaishou')
+    xlcw_gdt_tyImplementation project(':gdt')
+    xlcw_gdt_tyCompileOnly project(':baiduaction')
+    xlcw_gdt_tyImplementation project(':ScanCode')
+
+    xlcw_gdt_clksdxhsjImplementation project(':xlcw')
+    xlcw_gdt_clksdxhsjImplementation project(':reyun')
+    xlcw_gdt_clksdxhsjCompileOnly project(':toutiao')
+    xlcw_gdt_clksdxhsjCompileOnly project(':kuaishou')
+    xlcw_gdt_clksdxhsjImplementation project(':gdt')
+    xlcw_gdt_clksdxhsjCompileOnly project(':baiduaction')
+    xlcw_gdt_clksdxhsjImplementation project(':ScanCode')
+
+    xlcw_gdt_qtImplementation project(':xlcw')
+    xlcw_gdt_qtImplementation project(':reyun')
+    xlcw_gdt_qtCompileOnly project(':toutiao')
+    xlcw_gdt_qtCompileOnly project(':kuaishou')
+    xlcw_gdt_qtImplementation project(':gdt')
+    xlcw_gdt_qtCompileOnly project(':baiduaction')
+    xlcw_gdt_qtImplementation project(':ScanCode')
+
+    xlcw_gdt_xllImplementation project(':xlcw')
+    xlcw_gdt_xllImplementation project(':reyun')
+    xlcw_gdt_xllCompileOnly project(':toutiao')
+    xlcw_gdt_xllCompileOnly project(':kuaishou')
+    xlcw_gdt_xllImplementation project(':gdt')
+    xlcw_gdt_xllCompileOnly project(':baiduaction')
+    xlcw_gdt_xllImplementation project(':ScanCode')
+
+    xlcw_ks_qtImplementation project(':xlcw')
+    xlcw_ks_qtImplementation project(':reyun')
+    xlcw_ks_qtCompileOnly project(':toutiao')
+    xlcw_ks_qtImplementation project(':kuaishou')
+    xlcw_ks_qtCompileOnly project(':gdt')
+    xlcw_ks_qtCompileOnly project(':baiduaction')
+    xlcw_ks_qtImplementation project(':ScanCode')
+
+    xlcw_gdt_hwkshImplementation project(':xlcw')
+    xlcw_gdt_hwkshImplementation project(':reyun')
+    xlcw_gdt_hwkshCompileOnly project(':toutiao')
+    xlcw_gdt_hwkshImplementation project(':kuaishou')
+    xlcw_gdt_hwkshCompileOnly project(':gdt')
+    xlcw_gdt_hwkshCompileOnly project(':baiduaction')
+    xlcw_gdt_hwkshImplementation project(':ScanCode')
+
+    xlcw_ks_hwkshImplementation project(':xlcw')
+    xlcw_ks_hwkshImplementation project(':reyun')
+    xlcw_ks_hwkshCompileOnly project(':toutiao')
+    xlcw_ks_hwkshImplementation project(':kuaishou')
+    xlcw_ks_hwkshCompileOnly project(':gdt')
+    xlcw_ks_hwkshCompileOnly project(':baiduaction')
+    xlcw_ks_hwkshImplementation project(':ScanCode')
+
+    xlcw_gdt_hwksh_1095Implementation project(':xlcw')
+    xlcw_gdt_hwksh_1095Implementation project(':reyun')
+    xlcw_gdt_hwksh_1095CompileOnly project(':toutiao')
+    xlcw_gdt_hwksh_1095Implementation project(':kuaishou')
+    xlcw_gdt_hwksh_1095CompileOnly project(':gdt')
+    xlcw_gdt_hwksh_1095CompileOnly project(':baiduaction')
+    xlcw_gdt_hwksh_1095Implementation project(':ScanCode')
+
+    xlcw_ks_hwksh_1095Implementation project(':xlcw')
+    xlcw_ks_hwksh_1095Implementation project(':reyun')
+    xlcw_ks_hwksh_1095CompileOnly project(':toutiao')
+    xlcw_ks_hwksh_1095Implementation project(':kuaishou')
+    xlcw_ks_hwksh_1095CompileOnly project(':gdt')
+    xlcw_ks_hwksh_1095CompileOnly project(':baiduaction')
+    xlcw_ks_hwksh_1095Implementation project(':ScanCode')
+
+    xlcw_ks_tyImplementation project(':xlcw')
+    xlcw_ks_tyImplementation project(':reyun')
+    xlcw_ks_tyCompileOnly project(':toutiao')
+    xlcw_ks_tyImplementation project(':kuaishou')
+    xlcw_ks_tyCompileOnly project(':gdt')
+    xlcw_ks_tyCompileOnly project(':baiduaction')
+    xlcw_ks_tyImplementation project(':ScanCode')
+
+    xlcw_ks_xllImplementation project(':xlcw')
+    xlcw_ks_xllImplementation project(':reyun')
+    xlcw_ks_xllCompileOnly project(':toutiao')
+    xlcw_ks_xllImplementation project(':kuaishou')
+    xlcw_ks_xllCompileOnly project(':gdt')
+    xlcw_ks_xllCompileOnly project(':baiduaction')
+    xlcw_ks_xllImplementation project(':ScanCode')
+
+    xlcw_xf_gdt_tyImplementation project(':xlcw')
+    xlcw_xf_gdt_tyImplementation project(':reyun')
+    xlcw_xf_gdt_tyCompileOnly project(':toutiao')
+    xlcw_xf_gdt_tyCompileOnly project(':kuaishou')
+    xlcw_xf_gdt_tyImplementation project(':gdt')
+    xlcw_xf_gdt_tyCompileOnly project(':baiduaction')
+    xlcw_xf_gdt_tyImplementation project(':ScanCode')
+
+    xlcw_subchannelImplementation project(':xlcw')
+    xlcw_subchannelImplementation project(':reyun')
+    xlcw_subchannelImplementation project(':toutiao')
+    xlcw_subchannelCompileOnly project(':kuaishou')
+    xlcw_subchannelCompileOnly project(':gdt')
+    xlcw_subchannelCompileOnly project(':baiduaction')
+    xlcw_subchannelImplementation project(':ScanCode')
+
+}
+
+android.applicationVariants.all {
+    variant ->
+        variant.outputs.all {
+            output ->
+                variant.productFlavors.each {
+                    flavor ->
+                        def project = "Aggregated"
+                        def separator = "_"
+                        def buildType = variant.buildType.name
+                        def versionName = variant.versionName
+                        def versionCode = variant.versionCode
+                        def date = new Date()
+                        def formattedDate = date.format('yyyyMMdd')
+
+                        def apkName = project + separator + "v" + versionName + separator + versionCode + separator + buildType + separator + flavor.name + ".apk"
+                        if (buildType == "release") {
+                            apkName = project + separator + "v" + versionName + separator + versionCode + separator + buildType + separator + flavor.name + separator + formattedDate + ".apk"
+
+                            String flavorNameToUpperCase = ((String) flavor.name).substring(0, 1).toUpperCase() + flavor.name.substring(1)
+                            String registerTaskName = "fastPackage" + flavorNameToUpperCase + "Release"
+                            String dependsOnTaskName = "compress" + flavorNameToUpperCase + "ReleaseAssets"
+                            String finalizedByTaskName = "package" + flavorNameToUpperCase + "Release"
+                            tasks.register(registerTaskName){
+                                doFirst {
+                                    println "\n--[Black - $registerTaskName] START"
+                                    println "\n--[Black - $registerTaskName] Task.dependsOn $dependsOnTaskName"
+                                    println "\n--[Black - $registerTaskName] Task.finalizedBy $finalizedByTaskName \n"
+                                }
+                                dependsOn dependsOnTaskName
+                                finalizedBy finalizedByTaskName
+                            }
+
+                            String registerInstallTaskName = "fastInstall" + flavorNameToUpperCase + "Release"
+                            String finalizedByInstallTaskName = "install" + flavorNameToUpperCase + "Release"
+                            tasks.register(registerInstallTaskName){
+                                doFirst {
+                                    println "\n--[Black - $registerInstallTaskName] START"
+                                    println "\n--[Black - $registerInstallTaskName] Task.dependsOn $dependsOnTaskName"
+                                    println "\n--[Black - $registerInstallTaskName] Task.finalizedBy $finalizedByInstallTaskName \n"
+                                }
+                                dependsOn dependsOnTaskName
+                                finalizedBy finalizedByInstallTaskName
+                            }
+                        }
+
+                        output.outputFileName = apkName
+                }
+        }
+}
+
+/**
+ *  根据subPackageTag来拿到对应渠道包目录下AndroidManifest.xml中的package值，获取到包名
+ * @return applicationName 包名
+ */
+String getXingHuiApplicationIdWithSubPackageTag(String subPackageTag) {
+
+    String xinghuiAndroidXmlFilePath = new StringBuffer()
+            .append(project(':app').getProjectDir().absolutePath).append(File.separator)
+            .append("src").append(File.separator).append("xinghui_subchannel").append(File.separator)
+            .append(subPackageTag).append(File.separator).append("AndroidManifest.xml").toString()
+
+    println '--[Black - Pack Sub] xinghuiAndroidXmlFilePath = ' + xinghuiAndroidXmlFilePath
+
+    String applicationName = null
+    try {
+        Document document = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                .parse(xinghuiAndroidXmlFilePath)
+        Element rootEt = document.getDocumentElement()
+        applicationName = rootEt.getAttribute("package")
+    } catch (Exception ignored) {
+//        e.toString()
+    }
+
+    println '--[Black - Pack Sub] xinghuiApplicationIdWithSubName = ' + applicationName
+
+    return applicationName
+}
+
+/**
+ *  根据subPackageTag来拿到对应渠道包目录下的java路径，然后向下遍历，遇到wxapi终止，此时根据遍历内容，可获取到包名
+ * @return applicationName 包名
+ */
+String getXlcwApplicationIdWithSubPackageTag(String subPackageTag) {
+
+    String xlcwJavaDirFilePath = new StringBuffer()
+            .append(project(':app').getProjectDir().absolutePath).append(File.separator)
+            .append("src").append(File.separator).append("xlcw_subchannel").append(File.separator)
+            .append(subPackageTag).append(File.separator).append("java").toString()
+
+    println '--[Black - Pack Sub] xlcwJavaDirFilePath = ' + xlcwJavaDirFilePath
+
+    String applicationIdByProjectPath = getApplicationIdByProjectPath(xlcwJavaDirFilePath)
+
+    if(applicationIdByProjectPath != null && applicationIdByProjectPath.length() > 0
+            && applicationIdByProjectPath != "null"){
+        applicationIdByProjectPath = applicationIdByProjectPath.replace(".wxapi", "")
+    }else{
+        applicationIdByProjectPath = null
+    }
+
+    println '--[Black - Pack Sub] xlcwApplicationIdWithSubName = ' + applicationIdByProjectPath
+
+    return applicationIdByProjectPath
+}
+
+/**
+ *  根据java路径，然后向下遍历，遇到wxapi终止，此时根据遍历内容，可获取到包名
+ * @param subName 子渠道名(单词拼音)
+ * @return applicationName 包名
+ */
+String getApplicationIdByProjectPath(String path) {
+    File dirFile = new File(path)
+    if (dirFile.exists()) {
+        File[] subFiles = dirFile.listFiles()
+        if (subFiles != null && subFiles.length > 0) {
+
+            for (File file : subFiles) {
+                String fileName = file.getName()
+                if (fileName == "wxapi"){
+                    return fileName
+                }
+
+                if(!file.isDirectory()){
+                    continue
+                }
+
+                String subName = getApplicationIdByProjectPath(file.getAbsolutePath())
+                if (subName.endsWith("wxapi")){
+                    return fileName + "." + subName
+                }
+            }
+        }
+    } else {
+        println '--[Black - Pack Sub] Project Dir File no exists!'
+    }
+
+    return null
+}
+
+/**
+ * 20210805
+ * 针对bundle*Release任务注入Aab转Apk构建脚本
+ */
+afterEvaluate {
+
+    TaskContainer tc = this.getTasks()
+    for(Task task : tc){
+        if(task.getName().matches("bundle" + "(.)*" + "Release")){
+            injectAabToApk(task)
+            injectFairGuard(task)
+        } else if(task.getName().matches("package" + "(.)*" + "Release")){
+            injectFairGuard(task)
+        }
+    }
+
+}
+
+static void read(InputStream inputStream, PrintStream out) {
+    try {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "gbk"))
+        String line
+        while ((line = reader.readLine()) != null) {
+            out.println(line)
+        }
+
+    } catch (IOException e) {
+        e.printStackTrace()
+    } finally {
+        try {
+            inputStream.close()
+        } catch (IOException e) {
+            e.printStackTrace()
+        }
+    }
+}
+
+static void copyFile(File src, File dest) throws IOException {
+    if(!src.exists()){
+        return
+    }
+    if(src.getAbsolutePath() == dest.getAbsolutePath()) {
+        return
+    }
+    if (src.isDirectory()) {
+        if (!dest.exists()) {
+            dest.mkdir()
+        }
+        String[] files = src.list()
+        for (String file : files) {
+            File srcFile = new File(src, file);
+            File destFile = new File(dest, file);
+            // 递归复制
+            copyFile(srcFile, destFile);
+        }
+    } else {
+        InputStream inputStream = new FileInputStream(src)
+        OutputStream outputStream = new FileOutputStream(dest)
+
+        byte[] buffer = new byte[1024]
+
+        int length;
+
+        while ((length = inputStream.read(buffer)) > 0) {
+            outputStream.write(buffer, 0, length)
+        }
+        inputStream.close()
+        outputStream.close()
+    }
+}
+
+void injectAabToApk(Task task) {
+    String taskName = task.getName()
+    String initialsCapitalOfProductFlavor = taskName.replace("bundle", "").replace("Release", "")
+    String productFlavor = initialsCapitalOfProductFlavor.toLowerCase()
+    if(productFlavor.length() <= 0){
+        return
+    }
+
+    task.doLast {
+        String aabFilePath = (rootProject.getRootDir().getAbsolutePath() + File.separator + "app"
+                + File.separator + "build" + File.separator + "outputs" + File.separator + "bundle"
+                + File.separator + productFlavor + "Release" + File.separator + "app-" + productFlavor + "-release.aab")
+
+        println "--[Black - Aab To Apk] aabToApk aabFilePath: " + aabFilePath
+
+        File aabFile = new File(aabFilePath)
+        if(aabFile.exists()){
+            String zToolsDirPath = rootProject.getRootDir().getAbsolutePath() + File.separator + 'zTools' + File.separator
+            String aabToApkJarPath = zToolsDirPath + 'aabToApk_1.0.1.jar'
+
+            String storepassJksPath = ""
+            String storepassPass = ""
+            String storepassAlias = ""
+            String storepassAliasPass = ""
+
+            for(def pf : android.productFlavors){
+                if(pf.name == productFlavor){
+                    storepassJksPath = pf.signingConfig.storeFile
+                    storepassPass = pf.signingConfig.storePassword
+                    storepassAlias = pf.signingConfig.keyAlias
+                    storepassAliasPass = pf.signingConfig.keyPassword
+                    break
+                }
+            }
+
+            if(storepassJksPath == "" || storepassPass == ""
+                || storepassAlias == "" || storepassAliasPass == ""){
+                println "\n--[Black - Aab To Apk] signingConfig error ->" +
+                        " storepassJksPath:" + storepassJksPath
+                        " storepassPass:" + storepassPass
+                        " storepassAlias:" + storepassAlias
+                        " storepassAliasPass:" + storepassAliasPass
+                return
+            }
+
+            String exec = ("java -jar " + aabToApkJarPath + " b"
+                    + " -aab " +  aabFilePath
+                    + " -apk " + aabFilePath + "_onlytest.apk"
+                    + " -storepass_file " + storepassJksPath
+                    + " -storepass_pass " + storepassPass
+                    + " -storepass_alias " + storepassAlias
+                    + " -storepass_alias_pass " + storepassAliasPass
+                    + " -enforce")
+
+            println "\n--[Black - Aab To Apk] exec -> " + exec + " \n"
+
+            Runtime rt = Runtime.getRuntime()
+            Process process = rt.exec(exec)
+
+            new Thread() {
+                void run() {
+                    read(process.getInputStream(), System.out)
+                }
+            }.start()
+
+            new Thread() {
+                void run() {
+                    read(process.getErrorStream(), System.err)
+                }
+            }.start()
+
+            int exitCode = process.waitFor()
+            process.destroy()
+
+            println "\n--[Black - Aab To Apk] Complete Aab To Apk task. exitCode: " + exitCode + " \n"
+
+        } else {
+            println "\n--[Black - Aab To Apk] Could not find aab file.\n"
+        }
+    }
+
+}
+
+void injectFairGuard(Task task) {
+    String taskName = task.getName()
+    String initialsCapitalOfProductFlavor = taskName.replace("package", "").replace("bundle", "").replace("Release", "")
+    String productFlavor = initialsCapitalOfProductFlavor.toLowerCase()
+    if (productFlavor.length() <= 0) {
+        return
+    }
+    boolean isAAB = taskName.startsWith("bundle")
+
+    task.doLast {
+        String outputsPath = (rootProject.getRootDir().getAbsolutePath() + File.separator + "app" +
+                File.separator + "build" + File.separator + "outputs" + File.separator)
+        String inFileDirPath = (outputsPath +
+                (isAAB ? ("bundle" + File.separator + productFlavor + "Release")
+                    : ("apk" + File.separator + productFlavor + File.separator + "release"))
+                + File.separator)
+        println "--[Black - FairGuard] fairGuard inFileDirPath: " + inFileDirPath
+
+        String outputFileName = ""
+        File inFileDir = new File(inFileDirPath)
+        if(inFileDir.exists()){
+            String[] inFileDirFilePathList = inFileDir.list()
+            if(inFileDirFilePathList.length <= 0){
+                println "--[Black - FairGuard] input file dir not file exist! "
+                return
+            }
+            for(String fileName : inFileDirFilePathList){
+                if(isAAB ? fileName.endsWith(".aab") : fileName.endsWith(".apk")){
+                    println "--[Black - FairGuard] input file dir filePath: " + fileName
+                    outputFileName = fileName
+                    break
+                }
+            }
+        }
+
+        if("" == outputFileName){
+            println "--[Black - FairGuard] build output file name unknown! "
+            return
+        }
+
+        String inFilePath = inFileDirPath + outputFileName
+        println "--[Black - FairGuard] fairGuard inFilePath: " + inFilePath
+
+        boolean isSubChannel = productFlavor.endsWith("_subchannel")
+        String productFlavorFairGuardConfigFilePath = rootProject.getRootDir().getAbsolutePath() +
+                File.separator + "app" + File.separator + "src" + File.separator + productFlavor +
+                (isSubChannel ? (File.separator + rootProject.subPackageTag) : "") +
+                File.separator + "fairguard" + File.separator + "config.ini"
+        File productFlavorFairGuardConfigFile = new File(productFlavorFairGuardConfigFilePath)
+        if(!productFlavorFairGuardConfigFile.exists()){
+            println "--[Black - FairGuard] fairGuard Missing config file with " + productFlavor +
+                    " filePath -> " + productFlavorFairGuardConfigFilePath
+            return
+        }
+
+        String fairGuardDirPath = inFileDirPath + "FairGuard" + File.separator
+
+        File fairGuardFolder = new File(fairGuardDirPath)
+        if (!fairGuardFolder.exists()){
+            fairGuardFolder.mkdirs()
+        }
+
+        String fairGuardJarDirPath = (rootProject.getRootDir().getAbsolutePath() + File.separator + "zTools" +
+                File.separator + "FairGuardJar" + File.separator)
+        String fairGuardConfigFilePath = fairGuardJarDirPath + "config.ini"
+        File fairGuardConfigFile = new File(fairGuardConfigFilePath)
+        if(fairGuardConfigFile.exists()){
+            fairGuardConfigFile.delete()
+        }
+        copyFile(productFlavorFairGuardConfigFile, fairGuardConfigFile)
+
+        String fairGuardJarPath = fairGuardJarDirPath + "FairGuard2.8.8.jar"
+        String exec = ("java -jar " + fairGuardJarPath + " -autoconfig " + (isAAB ? "-sign" : "-signapk") +
+                " -inputfile " + inFilePath +
+                " -outputfile " + fairGuardDirPath +
+                (isAAB ? outputFileName.replace(".aab", "_fairguard_protected.aab") :
+                         outputFileName.replace(".apk", "_fairguard_protected.apk")))
+
+        println "\n--[Black - FairGuard]  exec: " + exec + " \n"
+
+        Runtime rt = Runtime.getRuntime()
+        Process process = rt.exec(exec)
+
+        new Thread() {
+            void run() {
+                read(process.getInputStream(), System.out)
+            }
+        }.start()
+
+        new Thread() {
+            void run() {
+                read(process.getErrorStream(), System.err)
+            }
+        }.start()
+
+        int exitCode = process.waitFor()
+        process.destroy()
+
+        println "\n--[Black - FairGuard] Complete FairGuard task. exitCode: " + exitCode + " \n"
+    }
+}
+
+apply from: 'xlcwbeta.gradle'
